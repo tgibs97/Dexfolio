@@ -6,6 +6,7 @@ import type {
   CatalogCard,
   CatalogCardsResponse,
   CatalogSetsResponse,
+  CollectionImportResponse,
   PokemonDetail,
   PokedexSyncResponse,
   PokedexSyncStatus,
@@ -39,16 +40,38 @@ export class ApiRequestError extends Error {
  */
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, { credentials: 'same-origin', ...options });
-  if (!response.ok) {
-    let body: ApiError = { error: `Request failed (${response.status})` };
-    try {
-      body = (await response.json()) as ApiError;
-    } catch {
-      /* Keep the status fallback. */
-    }
-    throw new ApiRequestError(body.error, response.status, body.fieldErrors);
-  }
+  if (!response.ok) await throwResponseError(response);
   return response.json() as Promise<T>;
+}
+
+async function downloadRequest(url: string): Promise<BackupDownload> {
+  const response = await fetch(url, { credentials: 'same-origin' });
+  if (!response.ok) await throwResponseError(response);
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const filename = /filename="([^"]+)"/.exec(disposition)?.[1] || 'dexfolio-backup.zip';
+  return {
+    blob: await response.blob(),
+    filename,
+    cards: Number(response.headers.get('X-Dexfolio-Cards')) || 0,
+    images: Number(response.headers.get('X-Dexfolio-Images')) || 0,
+  };
+}
+
+async function throwResponseError(response: Response): Promise<never> {
+  let body: ApiError = { error: `Request failed (${response.status})` };
+  try {
+    body = (await response.json()) as ApiError;
+  } catch {
+    /* Keep the status fallback. */
+  }
+  throw new ApiRequestError(body.error, response.status, body.fieldErrors);
+}
+
+interface BackupDownload {
+  blob: Blob;
+  filename: string;
+  cards: number;
+  images: number;
 }
 
 // Keeping endpoint details here prevents UI components from duplicating URLs
@@ -121,6 +144,13 @@ export const api = {
   pokedexSyncStatus: () => request<PokedexSyncStatus>('/api/admin/pokedex/status'),
   syncPokedex: () => request<PokedexSyncResponse>('/api/admin/pokedex/sync', { method: 'POST' }),
   refreshPrices: () => request<PriceRefreshResponse>('/api/admin/prices/refresh', { method: 'POST' }),
+  exportData: () => downloadRequest('/api/admin/data/export'),
+  importData: (file: File) =>
+    request<CollectionImportResponse>('/api/admin/data/import', {
+      method: 'POST',
+      headers: { 'Content-Type': file.name.toLowerCase().endsWith('.zip') ? 'application/zip' : 'application/json' },
+      body: file,
+    }),
 };
 
 // Card writes use multipart form data because they may contain an image file.

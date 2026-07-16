@@ -184,6 +184,79 @@ export interface PokedexSyncResponse extends PokedexSyncStatus {
   syncedAt: string;
 }
 
+/** Portable JSON backup. Card photos are intentionally excluded from this metadata-only format. */
+export interface CollectionBackup {
+  format: 'dexfolio-collection';
+  version: 1;
+  exportedAt: string;
+  cards: CollectionBackupCard[];
+  priceHistory: CollectionBackupPriceHistory[];
+}
+
+export interface CollectionArchiveManifest {
+  format: 'dexfolio-collection';
+  version: 2;
+  exportedAt: string;
+  cards: CollectionBackupCard[];
+  priceHistory: CollectionBackupPriceHistory[];
+  images: CollectionArchiveImage[];
+}
+
+export interface CollectionArchiveImage {
+  cardId: string;
+  path: string;
+  contentType: 'image/jpeg' | 'image/png' | 'image/webp' | 'image/gif';
+}
+
+export interface CollectionBackupCard {
+  id: string;
+  pokemonNationalDexNumber: number;
+  cardName: string;
+  setName: string;
+  setCode: string | null;
+  cardNumber: string;
+  rarity: string | null;
+  printing: string;
+  language: string;
+  condition: string;
+  acquisitionDate: string | null;
+  purchasePriceCents: number | null;
+  catalogCardId: string | null;
+  marketPriceCents: number | null;
+  lowPriceCents: number | null;
+  midPriceCents: number | null;
+  highPriceCents: number | null;
+  priceUpdatedAt: string | null;
+  tcgplayerUrl: string | null;
+  notes: string | null;
+  isCurrent: boolean;
+  addedAt: string;
+  updatedAt: string;
+  replacedAt: string | null;
+  retiredReason: 'replaced' | 'removed' | 'restored' | null;
+  hadImage: boolean;
+}
+
+export interface CollectionBackupPriceHistory {
+  catalogCardId: string;
+  printing: string;
+  marketPriceCents: number | null;
+  lowPriceCents: number | null;
+  midPriceCents: number | null;
+  highPriceCents: number | null;
+  sourceUpdatedAt: string;
+  capturedAt: string;
+}
+
+export interface CollectionImportResponse {
+  cardsImported: number;
+  currentCards: number;
+  priceHistoryImported: number;
+  imagesImported: number;
+  skippedImages: number;
+  importedAt: string;
+}
+
 export type PriceHistoryRange = '30d' | '90d' | '1y' | 'all';
 
 export interface PriceHistoryPoint {

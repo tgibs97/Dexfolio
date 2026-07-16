@@ -6,6 +6,7 @@ import { Admin } from './Admin';
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('Admin', () => {
@@ -67,6 +68,52 @@ describe('Admin', () => {
 
     expect(await screen.findByText('Pokédex sync complete')).toBeInTheDocument();
     expect(screen.getByText(/#1026 Examplemon/)).toBeInTheDocument();
+    expect(onDataChanged).toHaveBeenCalledOnce();
+  });
+
+  it('downloads a ZIP collection backup with photos', async () => {
+    vi.spyOn(api, 'exportData').mockResolvedValue({
+      blob: new Blob(['archive'], { type: 'application/zip' }),
+      filename: 'dexfolio-2026-07-16.zip',
+      cards: 2,
+      images: 1,
+    });
+    const objectUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:backup');
+    const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+
+    render(<Admin onDataChanged={vi.fn()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Export ZIP backup' }));
+
+    expect(await screen.findByText('Exported 2 card records and 1 photo.')).toBeInTheDocument();
+    expect(objectUrl).toHaveBeenCalledOnce();
+    expect(click).toHaveBeenCalledOnce();
+    expect(revokeUrl).toHaveBeenCalledWith('blob:backup');
+  });
+
+  it('confirms and imports a selected backup', async () => {
+    const onDataChanged = vi.fn();
+    vi.stubGlobal(
+      'confirm',
+      vi.fn(() => true),
+    );
+    vi.spyOn(api, 'importData').mockResolvedValue({
+      cardsImported: 3,
+      currentCards: 2,
+      priceHistoryImported: 4,
+      imagesImported: 1,
+      skippedImages: 1,
+      importedAt: '2026-07-16T17:00:00.000Z',
+    });
+    const file = new File(['{"format":"dexfolio-collection"}'], 'backup.json', { type: 'application/json' });
+
+    render(<Admin onDataChanged={onDataChanged} />);
+    fireEvent.change(screen.getByLabelText('Choose ZIP backup'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import and replace' }));
+
+    expect(await screen.findByText('Collection import complete')).toBeInTheDocument();
+    expect(api.importData).toHaveBeenCalledWith(file);
+    expect(screen.getByText('3')).toBeInTheDocument();
     expect(onDataChanged).toHaveBeenCalledOnce();
   });
 });

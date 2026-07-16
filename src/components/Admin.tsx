@@ -1,5 +1,10 @@
-import { useState } from 'react';
-import type { PokedexSyncResponse, PokedexSyncStatus, PriceRefreshResponse } from '../../shared/types';
+import { useRef, useState } from 'react';
+import type {
+  CollectionImportResponse,
+  PokedexSyncResponse,
+  PokedexSyncStatus,
+  PriceRefreshResponse,
+} from '../../shared/types';
 import { api, ApiRequestError } from '../api';
 
 /** Owner-only maintenance tools; the surrounding app already requires the admin session. */
@@ -12,6 +17,13 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
   const [pokedexStatus, setPokedexStatus] = useState<PokedexSyncStatus | null>(null);
   const [pokedexResult, setPokedexResult] = useState<PokedexSyncResponse | null>(null);
   const [pokedexError, setPokedexError] = useState('');
+  const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [selectedBackup, setSelectedBackup] = useState<File | null>(null);
+  const [transferResult, setTransferResult] = useState<CollectionImportResponse | null>(null);
+  const [transferMessage, setTransferMessage] = useState('');
+  const [transferError, setTransferError] = useState('');
+  const backupInput = useRef<HTMLInputElement>(null);
 
   async function refreshPrices() {
     setRefreshing(true);
@@ -52,6 +64,51 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
       setPokedexError(reason instanceof ApiRequestError ? reason.message : 'New Pokémon could not be synchronized.');
     } finally {
       setSyncingPokedex(false);
+    }
+  }
+
+  async function exportData() {
+    setExporting(true);
+    setTransferError('');
+    setTransferResult(null);
+    try {
+      const backup = await api.exportData();
+      downloadBlob(backup.blob, backup.filename);
+      setTransferMessage(
+        `Exported ${backup.cards} card record${backup.cards === 1 ? '' : 's'} and ${backup.images} photo${backup.images === 1 ? '' : 's'}.`,
+      );
+    } catch (reason) {
+      setTransferMessage('');
+      setTransferError(reason instanceof ApiRequestError ? reason.message : 'Collection data could not be exported.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  async function importData() {
+    if (!selectedBackup) return;
+    if (selectedBackup.size > 50 * 1024 * 1024) {
+      setTransferError('The backup file must be 50 MB or smaller.');
+      return;
+    }
+    const confirmed = window.confirm(
+      'Importing will replace all current and archived card records, pricing history, and card photos. Continue?',
+    );
+    if (!confirmed) return;
+    setImporting(true);
+    setTransferError('');
+    setTransferMessage('');
+    setTransferResult(null);
+    try {
+      const result = await api.importData(selectedBackup);
+      setTransferResult(result);
+      setSelectedBackup(null);
+      if (backupInput.current) backupInput.current.value = '';
+      onDataChanged();
+    } catch (reason) {
+      setTransferError(reason instanceof ApiRequestError ? reason.message : 'Collection data could not be imported.');
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -147,6 +204,96 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
           </div>
         )}
       </section>
+      <section className="admin-panel" aria-labelledby="data-transfer-title">
+        <div>
+          <p className="eyebrow">Portable collection backup</p>
+          <h2 id="data-transfer-title">Import or export collection data</h2>
+          <p>
+            Export current and archived cards, pricing history, and card photos in one ZIP. Importing replaces those
+            records and reconnects them to Pokémon by National Pokédex number.
+          </p>
+          <p className="admin-note">
+            Legacy JSON backups are still supported without photos. Update the Pokédex first if a backup contains newer
+            Pokémon.
+          </p>
+        </div>
+        <div className="admin-actions admin-transfer-actions">
+          <button
+            className="secondary admin-action"
+            disabled={exporting || importing}
+            onClick={() => void exportData()}
+          >
+            {exporting ? (
+              <>
+                <span className="button-spinner dark" aria-hidden="true" /> Exporting…
+              </>
+            ) : (
+              'Export ZIP backup'
+            )}
+          </button>
+          <label className="file-picker">
+            <span>{selectedBackup ? selectedBackup.name : 'Choose ZIP backup'}</span>
+            <input
+              ref={backupInput}
+              type="file"
+              accept="application/zip,application/json,.zip,.json"
+              disabled={exporting || importing}
+              onChange={(event) => setSelectedBackup(event.target.files?.[0] ?? null)}
+            />
+          </label>
+          <button
+            className="primary admin-action"
+            disabled={!selectedBackup || exporting || importing}
+            onClick={() => void importData()}
+          >
+            {importing ? (
+              <>
+                <span className="button-spinner" aria-hidden="true" /> Importing…
+              </>
+            ) : (
+              'Import and replace'
+            )}
+          </button>
+        </div>
+        {transferError && (
+          <p className="form-error admin-result" role="alert">
+            {transferError}
+          </p>
+        )}
+        {transferMessage && !transferError && (
+          <p className="admin-result transfer-message" role="status">
+            {transferMessage}
+          </p>
+        )}
+        {transferResult && !transferError && (
+          <div className="admin-result" role="status">
+            <strong>Collection import complete</strong>
+            <dl className="transfer-stats">
+              <div>
+                <dt>Card records</dt>
+                <dd>{transferResult.cardsImported}</dd>
+              </div>
+              <div>
+                <dt>Current cards</dt>
+                <dd>{transferResult.currentCards}</dd>
+              </div>
+              <div>
+                <dt>Price snapshots</dt>
+                <dd>{transferResult.priceHistoryImported}</dd>
+              </div>
+              <div>
+                <dt>Photos restored</dt>
+                <dd>{transferResult.imagesImported}</dd>
+              </div>
+              <div>
+                <dt>Photos skipped</dt>
+                <dd>{transferResult.skippedImages}</dd>
+              </div>
+            </dl>
+            <small>Finished {formatDateTime(transferResult.importedAt)}</small>
+          </div>
+        )}
+      </section>
       <section className="admin-panel" aria-labelledby="pricing-title">
         <div>
           <p className="eyebrow">TCGplayer snapshots</p>
@@ -211,4 +358,13 @@ function formatAddedPokemon(pokemon: PokedexSyncResponse['addedPokemon']): strin
   const visible = pokemon.slice(0, 8).map((item) => `#${item.nationalDexNumber} ${item.name}`);
   const remaining = pokemon.length - visible.length;
   return `Added ${visible.join(', ')}${remaining > 0 ? `, and ${remaining} more` : ''}.`;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }

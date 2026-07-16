@@ -3,6 +3,8 @@ import { secureHeaders } from 'hono/secure-headers';
 import type { PriceHistoryRange, SortOption } from '../shared/types';
 import { clearSession, createSession, credentialsAreValid, getSessionRole, hasAllowedOrigin } from './auth';
 import { getCatalogCards, getCatalogCardsByIds, getCatalogSets } from './catalog';
+import { exportCollectionArchive, importCollectionArchive, importJsonCollection } from './dataArchive';
+import { CollectionBackupError, exportCollectionBackup } from './dataTransfer';
 import { getCardPriceHistory, getCardRow, getPokemonDetail, listPokemon } from './db';
 import type { Env } from './env';
 import { ImageValidationError, storeImage, validateImage } from './images';
@@ -154,6 +156,50 @@ app.post('/api/admin/pokedex/sync', async (c) => {
     if (!(error instanceof PokedexUnavailableError)) throw error;
     console.error('Pokédex sync failed', error);
     return c.json({ error: 'New Pokémon could not be synchronized from PokéAPI.' }, 502);
+  }
+});
+
+app.get('/api/admin/data/export', async (c) => {
+  const date = new Date().toISOString().slice(0, 10);
+  if (c.req.query('format') === 'json') {
+    return c.json(await exportCollectionBackup(c.env.DB), 200, {
+      'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename="dexfolio-${date}.json"`,
+    });
+  }
+  const archive = await exportCollectionArchive(c.env);
+  return new Response(archive.stream, {
+    headers: {
+      'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename="dexfolio-${date}.zip"`,
+      'Content-Type': 'application/zip',
+      'X-Dexfolio-Cards': String(archive.cards),
+      'X-Dexfolio-Images': String(archive.images),
+    },
+  });
+});
+
+app.post('/api/admin/data/import', async (c) => {
+  const contentLength = Number(c.req.header('content-length'));
+  if (contentLength > 50 * 1024 * 1024) return c.json({ error: 'The backup file must be 50 MB or smaller.' }, 413);
+  const buffer = await c.req.raw.arrayBuffer();
+  if (buffer.byteLength > 50 * 1024 * 1024) {
+    return c.json({ error: 'The backup file must be 50 MB or smaller.' }, 413);
+  }
+  try {
+    const bytes = new Uint8Array(buffer);
+    const isZip = c.req.header('content-type')?.includes('zip') || (bytes[0] === 0x50 && bytes[1] === 0x4b);
+    if (isZip) return c.json(await importCollectionArchive(c.env, buffer));
+    let body: unknown;
+    try {
+      body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    } catch {
+      return c.json({ error: 'The selected file is not valid JSON or a Dexfolio ZIP backup.' }, 400);
+    }
+    return c.json(await importJsonCollection(c.env, body));
+  } catch (error) {
+    if (error instanceof CollectionBackupError) return c.json({ error: error.message }, 422);
+    throw error;
   }
 });
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
 import app from '../../worker/index';
+import sampleBackup from '../../dexfolio-test-import.json';
 
 const origin = 'http://example.com';
 
@@ -91,6 +92,8 @@ describe('collection card workflows', () => {
     expect(await write.json()).toEqual({ error: 'Guest access is view only.' });
     expect((await request('/api/admin/pokedex/status', {}, headers)).status).toBe(403);
     expect((await request('/api/admin/prices/refresh', { method: 'POST' }, headers)).status).toBe(403);
+    expect((await request('/api/admin/data/export', {}, headers)).status).toBe(403);
+    expect((await request('/api/admin/data/import', { method: 'POST' }, headers)).status).toBe(403);
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM owned_cards').first<{ count: number }>()).toEqual({
       count: 0,
     });
@@ -281,6 +284,131 @@ describe('collection card workflows', () => {
       highestValueCard: { pokemonId: 1, pokemonName: 'Bulbasaur', cardName: 'Bulbasaur ex', cents: 1500 },
       lowestValueCard: { pokemonId: 2, pokemonName: 'Ivysaur', cardName: 'Ivysaur', cents: 800 },
     });
+  });
+
+  it('exports and restores collection records and price history', async () => {
+    const headers = await authenticatedHeaders();
+    await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Bulbasaur backup') }, headers);
+    await env.DB.prepare(
+      "UPDATE owned_cards SET image_key = 'cards/1/example.png', image_content_type = 'image/png'",
+    ).run();
+
+    const exportResponse = await request('/api/admin/data/export?format=json', {}, headers);
+    expect(exportResponse.status).toBe(200);
+    expect(exportResponse.headers.get('Content-Disposition')).toContain('dexfolio-');
+    const backup = (await exportResponse.json()) as any;
+    expect(backup).toMatchObject({
+      format: 'dexfolio-collection',
+      version: 1,
+      cards: [
+        {
+          pokemonNationalDexNumber: 1,
+          cardName: 'Bulbasaur backup',
+          isCurrent: true,
+          hadImage: true,
+        },
+      ],
+    });
+    expect(backup.priceHistory).toHaveLength(1);
+
+    await env.DB.batch([
+      env.DB.prepare("UPDATE owned_cards SET card_name = 'Changed after export'"),
+      env.DB.prepare('DELETE FROM catalog_price_history'),
+    ]);
+    const importResponse = await request(
+      '/api/admin/data/import',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup) },
+      headers,
+    );
+    expect(importResponse.status).toBe(200);
+    expect(await importResponse.json()).toMatchObject({
+      cardsImported: 1,
+      currentCards: 1,
+      priceHistoryImported: 1,
+      skippedImages: 1,
+    });
+    const detail = (await (await request('/api/pokemon/1', {}, headers)).json()) as any;
+    expect(detail.currentCard).toMatchObject({ cardName: 'Bulbasaur backup', imageUrl: null });
+    expect(
+      await env.DB.prepare('SELECT COUNT(*) AS count FROM catalog_price_history').first<{ count: number }>(),
+    ).toEqual({ count: 1 });
+  });
+
+  it('round-trips card photos through a ZIP backup', async () => {
+    const headers = await authenticatedHeaders();
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+    const image = new File([pngBytes], 'bulbasaur.png', { type: 'image/png' });
+    await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Bulbasaur photo', image) }, headers);
+    const original = await env.DB.prepare('SELECT image_key FROM owned_cards').first<{ image_key: string }>();
+
+    const exportResponse = await request('/api/admin/data/export', {}, headers);
+    expect(exportResponse.status).toBe(200);
+    expect(exportResponse.headers.get('Content-Type')).toContain('application/zip');
+    expect(exportResponse.headers.get('Content-Disposition')).toContain('.zip');
+    expect(exportResponse.headers.get('X-Dexfolio-Images')).toBe('1');
+    const archive = await exportResponse.arrayBuffer();
+
+    const importResponse = await request(
+      '/api/admin/data/import',
+      { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: archive },
+      headers,
+    );
+    expect(importResponse.status).toBe(200);
+    expect(await importResponse.json()).toMatchObject({
+      cardsImported: 1,
+      currentCards: 1,
+      imagesImported: 1,
+      skippedImages: 0,
+    });
+
+    const restored = await env.DB.prepare('SELECT image_key, image_content_type FROM owned_cards').first<{
+      image_key: string;
+      image_content_type: string;
+    }>();
+    expect(restored).toMatchObject({ image_content_type: 'image/png' });
+    expect(restored!.image_key).not.toBe(original!.image_key);
+    expect(await env.CARD_IMAGES.get(original!.image_key)).toBeNull();
+    const restoredObject = await env.CARD_IMAGES.get(restored!.image_key);
+    expect(new Uint8Array(await restoredObject!.arrayBuffer())).toEqual(pngBytes);
+  });
+
+  it('accepts the sample import file', async () => {
+    const headers = await authenticatedHeaders();
+    const response = await request(
+      '/api/admin/data/import',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sampleBackup) },
+      headers,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      cardsImported: 3,
+      currentCards: 2,
+      priceHistoryImported: 2,
+      skippedImages: 0,
+    });
+    const bulbasaur = (await (await request('/api/pokemon/1', {}, headers)).json()) as any;
+    expect(bulbasaur.currentCard.cardName).toBe('Bulbasaur Illustration Rare');
+    expect(bulbasaur.history).toHaveLength(1);
+  });
+
+  it('rejects incompatible backups without changing collection data', async () => {
+    const headers = await authenticatedHeaders();
+    await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Keep me') }, headers);
+    const backup = (await (await request('/api/admin/data/export?format=json', {}, headers)).json()) as any;
+    backup.cards[0].pokemonNationalDexNumber = 9999;
+
+    const response = await request(
+      '/api/admin/data/import',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup) },
+      headers,
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: 'Pokédex #9999 is not stored. Update the Pokédex before importing.',
+    });
+    const detail = (await (await request('/api/pokemon/1', {}, headers)).json()) as any;
+    expect(detail.currentCard.cardName).toBe('Keep me');
   });
 
   it('sorts priced cards by amount paid or market value with missing prices last', async () => {

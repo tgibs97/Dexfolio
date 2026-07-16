@@ -25,6 +25,7 @@ Cloudflare Worker (Hono + Zod)
 - Search by name or exact Pokédex number; status/generation filters; number/name/date sorting
 - Overall and per-generation progress
 - Add, edit, replace, remove, restore, and inspect previous cards
+- Versioned ZIP backup/restore for collection records, pricing history, and private card photos
 - Mobile camera capture, local preview, large-photo optimization, 8 MB server limit, MIME and file-signature validation
 - Cached Pokémon TCG set/card autocomplete with set-code and rarity autofill
 - Explicit Admin-page Pokédex update checks and safe synchronization of newly released species
