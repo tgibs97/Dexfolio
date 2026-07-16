@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "personal-pokedex-tracker",
+  "name": "dexfolio",
   "main": "worker/index.ts",
   "compatibility_date": "2026-07-16",
   "compatibility_flags": ["nodejs_compat"],
@@ -13,21 +13,21 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "personal-pokedex-tracker",
-      "database_id": "00000000-0000-0000-0000-000000000000",
-      "preview_database_id": "00000000-0000-0000-0000-000000000000",
+      "database_name": "dexfolio",
+      "database_id": "63444e0d-a4c1-4d01-82d3-3a8222117b61",
+      "preview_database_id": "92a3e984-d10e-46ae-8902-81577556bc51",
       "migrations_dir": "migrations",
     },
   ],
   "r2_buckets": [
     {
       "binding": "CARD_IMAGES",
-      "bucket_name": "personal-pokedex-card-images",
-      "preview_bucket_name": "personal-pokedex-card-images-preview",
+      "bucket_name": "dexfolio-card-images",
+      "preview_bucket_name": "dexfolio-card-images-preview",
     },
   ],
   "vars": {
-    "ALLOWED_ORIGIN": "https://pokedex.example.com",
+    "ALLOWED_ORIGIN": "https://dexfolio.trentagibson.workers.dev",
   },
   "observability": {
     "enabled": true,

@@ -55,16 +55,6 @@ const priceHistorySchema = z
   })
   .strict();
 
-const collectionBackupSchema = z
-  .object({
-    format: z.literal('dexfolio-collection'),
-    version: z.literal(1),
-    exportedAt: timestamp,
-    cards: z.array(backupCardSchema).max(10_000),
-    priceHistory: z.array(priceHistorySchema).max(50_000),
-  })
-  .strict();
-
 const collectionArchiveSchema = z
   .object({
     format: z.literal('dexfolio-collection'),
@@ -85,8 +75,6 @@ const collectionArchiveSchema = z
       .max(10_000),
   })
   .strict();
-
-const importSchema = z.union([collectionBackupSchema, collectionArchiveSchema]);
 
 export class CollectionBackupError extends Error {}
 
@@ -151,10 +139,10 @@ export async function importCollectionBackup(
   };
 }
 
-export async function validateCollectionBackup(db: D1Database, value: unknown): Promise<BackupPayload> {
-  const parsed = importSchema.safeParse(value);
-  if (!parsed.success) throw new CollectionBackupError('Use a valid Dexfolio collection backup file.');
-  const backup = parsed.data as BackupPayload;
+export async function validateCollectionBackup(db: D1Database, value: unknown): Promise<CollectionArchiveManifest> {
+  const parsed = collectionArchiveSchema.safeParse(value);
+  if (!parsed.success) throw new CollectionBackupError('Use a valid Dexfolio ZIP backup.');
+  const backup = parsed.data;
   const pokemon = await db.prepare('SELECT national_dex_number FROM pokemon').all<{ national_dex_number: number }>();
   const storedNumbers = new Set(pokemon.results.map((row) => row.national_dex_number));
   const cardIds = new Set<string>();
@@ -183,19 +171,17 @@ export async function validateCollectionBackup(db: D1Database, value: unknown): 
     if (priceKeys.has(key)) throw new CollectionBackupError('The backup contains duplicate price snapshots.');
     priceKeys.add(key);
   }
-  if (backup.version === 2) {
-    const imageCards = new Set<string>();
-    const imagePaths = new Set<string>();
-    for (const image of backup.images) {
-      if (!cardIds.has(image.cardId)) {
-        throw new CollectionBackupError('The backup contains an image for an unknown card.');
-      }
-      if (imageCards.has(image.cardId) || imagePaths.has(image.path)) {
-        throw new CollectionBackupError('The backup contains duplicate image entries.');
-      }
-      imageCards.add(image.cardId);
-      imagePaths.add(image.path);
+  const imageCards = new Set<string>();
+  const imagePaths = new Set<string>();
+  for (const image of backup.images) {
+    if (!cardIds.has(image.cardId)) {
+      throw new CollectionBackupError('The backup contains an image for an unknown card.');
     }
+    if (imageCards.has(image.cardId) || imagePaths.has(image.path)) {
+      throw new CollectionBackupError('The backup contains duplicate image entries.');
+    }
+    imageCards.add(image.cardId);
+    imagePaths.add(image.path);
   }
   return backup;
 }
@@ -334,8 +320,6 @@ export interface ImportedImage {
   key: string;
   contentType: CollectionArchiveManifest['images'][number]['contentType'];
 }
-
-export type BackupPayload = CollectionBackup | CollectionArchiveManifest;
 
 function mapBackupCard(row: BackupCardRow): CollectionBackupCard {
   return {

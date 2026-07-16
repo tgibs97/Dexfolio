@@ -87,6 +87,10 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
 
   async function importData() {
     if (!selectedBackup) return;
+    if (!selectedBackup.name.toLowerCase().endsWith('.zip')) {
+      setTransferError('Choose a Dexfolio ZIP backup.');
+      return;
+    }
     if (selectedBackup.size > 50 * 1024 * 1024) {
       setTransferError('The backup file must be 50 MB or smaller.');
       return;
@@ -213,8 +217,7 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
             records and reconnects them to Pokémon by National Pokédex number.
           </p>
           <p className="admin-note">
-            Legacy JSON backups are still supported without photos. Update the Pokédex first if a backup contains newer
-            Pokémon.
+            Only Dexfolio ZIP backups are supported. Update the Pokédex first if a backup contains newer Pokémon.
           </p>
         </div>
         <div className="admin-actions admin-transfer-actions">
@@ -236,7 +239,7 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
             <input
               ref={backupInput}
               type="file"
-              accept="application/zip,application/json,.zip,.json"
+              accept="application/zip,.zip"
               disabled={exporting || importing}
               onChange={(event) => setSelectedBackup(event.target.files?.[0] ?? null)}
             />

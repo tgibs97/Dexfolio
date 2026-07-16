@@ -105,7 +105,7 @@ describe('Admin', () => {
       skippedImages: 1,
       importedAt: '2026-07-16T17:00:00.000Z',
     });
-    const file = new File(['{"format":"dexfolio-collection"}'], 'backup.json', { type: 'application/json' });
+    const file = new File([new Uint8Array([0x50, 0x4b])], 'backup.zip', { type: 'application/zip' });
 
     render(<Admin onDataChanged={onDataChanged} />);
     fireEvent.change(screen.getByLabelText('Choose ZIP backup'), { target: { files: [file] } });
@@ -115,5 +115,20 @@ describe('Admin', () => {
     expect(api.importData).toHaveBeenCalledWith(file);
     expect(screen.getByText('3')).toBeInTheDocument();
     expect(onDataChanged).toHaveBeenCalledOnce();
+  });
+
+  it('rejects non-ZIP backup files before importing', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    const importData = vi.spyOn(api, 'importData');
+    const file = new File(['{}'], 'backup.json', { type: 'application/json' });
+
+    render(<Admin onDataChanged={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Choose ZIP backup'), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole('button', { name: 'Import and replace' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Choose a Dexfolio ZIP backup.');
+    expect(confirm).not.toHaveBeenCalled();
+    expect(importData).not.toHaveBeenCalled();
   });
 });

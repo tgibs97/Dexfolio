@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
+import type { CollectionArchiveManifest } from '../../shared/types';
 import app from '../../worker/index';
-import sampleBackup from '../../dexfolio-test-import.json';
+import { createZipStream, readStoredZip } from '../../worker/zip';
 
 const origin = 'http://example.com';
 
@@ -76,6 +77,12 @@ async function request(path: string, init: RequestInit, cookieHeaders: HeadersIn
   const headers = new Headers(cookieHeaders);
   if (init.headers) new Headers(init.headers).forEach((value, key) => headers.set(key, value));
   return app.fetch(new Request(`${origin}${path}`, { ...init, headers }), env);
+}
+
+function archiveManifest(archive: ArrayBuffer): CollectionArchiveManifest {
+  const manifest = readStoredZip(archive, 50 * 1024 * 1024).get('manifest.json');
+  if (!manifest) throw new Error('Test ZIP is missing manifest.json.');
+  return JSON.parse(new TextDecoder().decode(manifest)) as CollectionArchiveManifest;
 }
 
 describe('collection card workflows', () => {
@@ -289,27 +296,26 @@ describe('collection card workflows', () => {
   it('exports and restores collection records and price history', async () => {
     const headers = await authenticatedHeaders();
     await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Bulbasaur backup') }, headers);
-    await env.DB.prepare(
-      "UPDATE owned_cards SET image_key = 'cards/1/example.png', image_content_type = 'image/png'",
-    ).run();
 
-    const exportResponse = await request('/api/admin/data/export?format=json', {}, headers);
+    const exportResponse = await request('/api/admin/data/export', {}, headers);
     expect(exportResponse.status).toBe(200);
-    expect(exportResponse.headers.get('Content-Disposition')).toContain('dexfolio-');
-    const backup = (await exportResponse.json()) as any;
-    expect(backup).toMatchObject({
+    expect(exportResponse.headers.get('Content-Disposition')).toContain('.zip');
+    const archive = await exportResponse.arrayBuffer();
+    const manifest = archiveManifest(archive);
+    expect(manifest).toMatchObject({
       format: 'dexfolio-collection',
-      version: 1,
+      version: 2,
       cards: [
         {
           pokemonNationalDexNumber: 1,
           cardName: 'Bulbasaur backup',
           isCurrent: true,
-          hadImage: true,
+          hadImage: false,
         },
       ],
+      images: [],
     });
-    expect(backup.priceHistory).toHaveLength(1);
+    expect(manifest.priceHistory).toHaveLength(1);
 
     await env.DB.batch([
       env.DB.prepare("UPDATE owned_cards SET card_name = 'Changed after export'"),
@@ -317,7 +323,7 @@ describe('collection card workflows', () => {
     ]);
     const importResponse = await request(
       '/api/admin/data/import',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup) },
+      { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: archive },
       headers,
     );
     expect(importResponse.status).toBe(200);
@@ -325,7 +331,8 @@ describe('collection card workflows', () => {
       cardsImported: 1,
       currentCards: 1,
       priceHistoryImported: 1,
-      skippedImages: 1,
+      imagesImported: 0,
+      skippedImages: 0,
     });
     const detail = (await (await request('/api/pokemon/1', {}, headers)).json()) as any;
     expect(detail.currentCard).toMatchObject({ cardName: 'Bulbasaur backup', imageUrl: null });
@@ -372,35 +379,38 @@ describe('collection card workflows', () => {
     expect(new Uint8Array(await restoredObject!.arrayBuffer())).toEqual(pngBytes);
   });
 
-  it('accepts the sample import file', async () => {
+  it('rejects raw JSON imports without changing collection data', async () => {
     const headers = await authenticatedHeaders();
+    await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Keep me') }, headers);
     const response = await request(
       '/api/admin/data/import',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sampleBackup) },
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: 'dexfolio-collection', version: 1 }),
+      },
       headers,
     );
 
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      cardsImported: 3,
-      currentCards: 2,
-      priceHistoryImported: 2,
-      skippedImages: 0,
-    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: 'Choose a Dexfolio ZIP backup.' });
     const bulbasaur = (await (await request('/api/pokemon/1', {}, headers)).json()) as any;
-    expect(bulbasaur.currentCard.cardName).toBe('Bulbasaur Illustration Rare');
-    expect(bulbasaur.history).toHaveLength(1);
+    expect(bulbasaur.currentCard.cardName).toBe('Keep me');
   });
 
   it('rejects incompatible backups without changing collection data', async () => {
     const headers = await authenticatedHeaders();
     await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Keep me') }, headers);
-    const backup = (await (await request('/api/admin/data/export?format=json', {}, headers)).json()) as any;
-    backup.cards[0].pokemonNationalDexNumber = 9999;
+    const exported = await (await request('/api/admin/data/export', {}, headers)).arrayBuffer();
+    const manifest = archiveManifest(exported);
+    manifest.cards[0].pokemonNationalDexNumber = 9999;
+    const invalidArchive = await new Response(
+      createZipStream([{ name: 'manifest.json', data: new TextEncoder().encode(JSON.stringify(manifest)) }]),
+    ).arrayBuffer();
 
     const response = await request(
       '/api/admin/data/import',
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(backup) },
+      { method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: invalidArchive },
       headers,
     );
     expect(response.status).toBe(422);

@@ -71,10 +71,10 @@ After the initial seed, use **Admin → Update Pokédex** to check for newly rel
 
    ```bash
    npx wrangler login
-   npx wrangler d1 create personal-pokedex-tracker
-   npx wrangler d1 create personal-pokedex-tracker-preview
-   npx wrangler r2 bucket create personal-pokedex-card-images
-   npx wrangler r2 bucket create personal-pokedex-card-images-preview
+   npx wrangler d1 create dexfolio
+   npx wrangler d1 create dexfolio-preview
+   npx wrangler r2 bucket create dexfolio-card-images
+   npx wrangler r2 bucket create dexfolio-card-images-preview
    ```
 
 2. Replace both all-zero D1 IDs in `wrangler.jsonc` with the IDs returned by Cloudflare. Set `ALLOWED_ORIGIN` to the final `https://…` application origin. The production and preview bucket names are already declared.

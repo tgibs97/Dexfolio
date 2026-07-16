@@ -117,13 +117,6 @@ export async function importCollectionArchive(env: Env, buffer: ArrayBuffer): Pr
   }
 }
 
-export async function importJsonCollection(env: Env, value: unknown): Promise<CollectionImportResponse> {
-  const oldImages = await existingImageKeys(env.DB);
-  const result = await importCollectionBackup(env.DB, value);
-  await deleteImagesQuietly(env.CARD_IMAGES, oldImages, 'superseded');
-  return result;
-}
-
 async function existingImageKeys(db: D1Database): Promise<string[]> {
   const rows = await db
     .prepare('SELECT image_key FROM owned_cards WHERE image_key IS NOT NULL')

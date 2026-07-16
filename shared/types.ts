@@ -184,7 +184,7 @@ export interface PokedexSyncResponse extends PokedexSyncStatus {
   syncedAt: string;
 }
 
-/** Portable JSON backup. Card photos are intentionally excluded from this metadata-only format. */
+/** Internal collection metadata used to assemble the ZIP backup manifest. */
 export interface CollectionBackup {
   format: 'dexfolio-collection';
   version: 1;

@@ -148,7 +148,7 @@ export const api = {
   importData: (file: File) =>
     request<CollectionImportResponse>('/api/admin/data/import', {
       method: 'POST',
-      headers: { 'Content-Type': file.name.toLowerCase().endsWith('.zip') ? 'application/zip' : 'application/json' },
+      headers: { 'Content-Type': 'application/zip' },
       body: file,
     }),
 };

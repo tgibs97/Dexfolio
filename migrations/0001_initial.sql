@@ -1,5 +1,3 @@
-PRAGMA foreign_keys = ON;
-
 CREATE TABLE pokemon (
   id INTEGER PRIMARY KEY,
   national_dex_number INTEGER NOT NULL UNIQUE CHECK (national_dex_number > 0),
@@ -14,7 +12,7 @@ CREATE INDEX idx_pokemon_generation ON pokemon(generation, national_dex_number);
 
 CREATE TABLE collection_slots (
   pokemon_id INTEGER PRIMARY KEY REFERENCES pokemon(id) ON DELETE RESTRICT,
-  current_card_id TEXT,
+  current_card_id TEXT REFERENCES owned_cards(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -53,8 +51,6 @@ CREATE INDEX idx_owned_cards_pokemon ON owned_cards(pokemon_id, added_at DESC);
 CREATE INDEX idx_owned_cards_catalog_card ON owned_cards(catalog_card_id);
 CREATE UNIQUE INDEX idx_owned_cards_one_current ON owned_cards(pokemon_id) WHERE is_current = 1;
 
--- Price history belongs to the catalog card and physical printing so multiple
--- owned copies can share one trustworthy TCGplayer market timeline.
 CREATE TABLE catalog_price_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   catalog_card_id TEXT NOT NULL,
@@ -70,23 +66,3 @@ CREATE TABLE catalog_price_history (
 
 CREATE INDEX idx_catalog_price_history_lookup
   ON catalog_price_history(catalog_card_id, printing, source_updated_at DESC);
-
-CREATE TRIGGER validate_collection_current_card_insert
-BEFORE INSERT ON collection_slots
-WHEN NEW.current_card_id IS NOT NULL
-BEGIN
-  SELECT CASE WHEN NOT EXISTS (
-    SELECT 1 FROM owned_cards
-    WHERE id = NEW.current_card_id AND pokemon_id = NEW.pokemon_id AND is_current = 1
-  ) THEN RAISE(ABORT, 'Current card must belong to the collection slot') END;
-END;
-
-CREATE TRIGGER validate_collection_current_card_update
-BEFORE UPDATE OF current_card_id ON collection_slots
-WHEN NEW.current_card_id IS NOT NULL
-BEGIN
-  SELECT CASE WHEN NOT EXISTS (
-    SELECT 1 FROM owned_cards
-    WHERE id = NEW.current_card_id AND pokemon_id = NEW.pokemon_id AND is_current = 1
-  ) THEN RAISE(ABORT, 'Current card must belong to the collection slot') END;
-END;
