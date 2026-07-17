@@ -1,6 +1,6 @@
 import { type Context, Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
-import type { PriceHistoryRange, SortOption } from '../shared/types';
+import type { PriceHistoryRange, PriceRefreshResponse, SortOption } from '../shared/types';
 import { clearSession, createSession, credentialsAreValid, getSessionRole, hasAllowedOrigin } from './auth';
 import { getCatalogCards, getCatalogCardsByIds, getCatalogSets } from './catalog';
 import { exportCollectionArchive, importCollectionArchive } from './dataArchive';
@@ -192,77 +192,8 @@ app.post('/api/admin/data/import', async (c) => {
 });
 
 app.post('/api/admin/prices/refresh', async (c) => {
-  const rows = await c.env.DB.prepare('SELECT id, catalog_card_id, printing FROM owned_cards ORDER BY added_at').all<{
-    id: string;
-    catalog_card_id: string | null;
-    printing: string;
-  }>();
-  const linked = rows.results.filter((row): row is { id: string; catalog_card_id: string; printing: string } =>
-    Boolean(row.catalog_card_id),
-  );
-  if (!linked.length) {
-    return c.json({
-      total: rows.results.length,
-      refreshed: 0,
-      missingCatalogId: rows.results.length,
-      missingPricing: 0,
-      refreshedAt: new Date().toISOString(),
-    });
-  }
-
   try {
-    const catalogCards = await getCatalogCardsByIds(
-      c.env,
-      linked.map((row) => row.catalog_card_id),
-    );
-    const catalogById = new Map(catalogCards.map((card) => [card.id, card]));
-    const statements: D1PreparedStatement[] = [];
-    let refreshed = 0;
-    let missingPricing = 0;
-    for (const owned of linked) {
-      const catalog = catalogById.get(owned.catalog_card_id);
-      const price =
-        catalog?.prices.find((candidate) => candidate.printing === owned.printing) ||
-        (catalog?.prices.length === 1 ? catalog.prices[0] : undefined);
-      if (!catalog || !price) {
-        missingPricing += 1;
-        continue;
-      }
-      const historyStatement = priceHistoryStatement(c.env.DB, {
-        catalogCardId: catalog.id,
-        printing: price.printing,
-        marketPriceCents: price.marketCents,
-        lowPriceCents: price.lowCents,
-        midPriceCents: price.midCents,
-        highPriceCents: price.highCents,
-        sourceUpdatedAt: catalog.pricesUpdatedAt,
-      });
-      if (historyStatement) statements.push(historyStatement);
-      statements.push(
-        c.env.DB.prepare(
-          `UPDATE owned_cards SET printing = ?, market_price_cents = ?, low_price_cents = ?, mid_price_cents = ?,
-          high_price_cents = ?, price_updated_at = ?, tcgplayer_url = ? WHERE id = ?`,
-        ).bind(
-          price.printing,
-          price.marketCents,
-          price.lowCents,
-          price.midCents,
-          price.highCents,
-          catalog.pricesUpdatedAt,
-          catalog.tcgplayerUrl,
-          owned.id,
-        ),
-      );
-      refreshed += 1;
-    }
-    for (const batch of chunk(statements, 100)) await c.env.DB.batch(batch);
-    return c.json({
-      total: rows.results.length,
-      refreshed,
-      missingCatalogId: rows.results.length - linked.length,
-      missingPricing,
-      refreshedAt: new Date().toISOString(),
-    });
+    return c.json(await refreshOwnedCardPrices(c.env));
   } catch (error) {
     console.error('Bulk pricing refresh failed', error);
     return c.json({ error: 'Pricing could not be refreshed from the card catalog.' }, 502);
@@ -533,6 +464,80 @@ function chunk<T>(values: T[], size: number): T[][] {
   );
 }
 
+/** Refreshes every linked current and archived card from an uncached catalog lookup. */
+async function refreshOwnedCardPrices(env: Env): Promise<PriceRefreshResponse> {
+  const rows = await env.DB.prepare('SELECT id, catalog_card_id, printing FROM owned_cards ORDER BY added_at').all<{
+    id: string;
+    catalog_card_id: string | null;
+    printing: string;
+  }>();
+  const linked = rows.results.filter((row): row is { id: string; catalog_card_id: string; printing: string } =>
+    Boolean(row.catalog_card_id),
+  );
+  if (!linked.length) {
+    return {
+      total: rows.results.length,
+      refreshed: 0,
+      missingCatalogId: rows.results.length,
+      missingPricing: 0,
+      refreshedAt: new Date().toISOString(),
+    };
+  }
+
+  const catalogCards = await getCatalogCardsByIds(
+    env,
+    linked.map((row) => row.catalog_card_id),
+  );
+  const catalogById = new Map(catalogCards.map((card) => [card.id, card]));
+  const statements: D1PreparedStatement[] = [];
+  let refreshed = 0;
+  let missingPricing = 0;
+  for (const owned of linked) {
+    const catalog = catalogById.get(owned.catalog_card_id);
+    const price =
+      catalog?.prices.find((candidate) => candidate.printing === owned.printing) ||
+      (catalog?.prices.length === 1 ? catalog.prices[0] : undefined);
+    if (!catalog || !price) {
+      missingPricing += 1;
+      continue;
+    }
+    const historyStatement = priceHistoryStatement(env.DB, {
+      catalogCardId: catalog.id,
+      printing: price.printing,
+      marketPriceCents: price.marketCents,
+      lowPriceCents: price.lowCents,
+      midPriceCents: price.midCents,
+      highPriceCents: price.highCents,
+      sourceUpdatedAt: catalog.pricesUpdatedAt,
+    });
+    if (historyStatement) statements.push(historyStatement);
+    statements.push(
+      env.DB.prepare(
+        `UPDATE owned_cards SET printing = ?, market_price_cents = ?, low_price_cents = ?, mid_price_cents = ?,
+        high_price_cents = ?, price_updated_at = ?, tcgplayer_url = ? WHERE id = ?`,
+      ).bind(
+        price.printing,
+        price.marketCents,
+        price.lowCents,
+        price.midCents,
+        price.highCents,
+        catalog.pricesUpdatedAt,
+        catalog.tcgplayerUrl,
+        owned.id,
+      ),
+    );
+    refreshed += 1;
+  }
+  for (const batch of chunk(statements, 100)) await env.DB.batch(batch);
+  return {
+    total: rows.results.length,
+    refreshed,
+    missingCatalogId: rows.results.length - linked.length,
+    missingPricing,
+    refreshedAt: new Date().toISOString(),
+  };
+}
+
 /** Builds a deduplicated snapshot write when catalog pricing is available. */
 function priceHistoryStatement(
   db: D1Database,
@@ -590,4 +595,25 @@ function imageErrorResponse(c: Context<{ Bindings: Env }>, error: unknown) {
   throw error;
 }
 
-export default app;
+const worker = {
+  fetch: app.fetch,
+  async scheduled(controller: ScheduledController, env: Env) {
+    try {
+      const result = await refreshOwnedCardPrices(env);
+      console.log('Daily pricing refresh complete', {
+        cron: controller.cron,
+        scheduledTime: new Date(controller.scheduledTime).toISOString(),
+        ...result,
+      });
+    } catch (error) {
+      console.error('Daily pricing refresh failed', {
+        cron: controller.cron,
+        scheduledTime: new Date(controller.scheduledTime).toISOString(),
+        error,
+      });
+      throw error;
+    }
+  },
+} satisfies ExportedHandler<Env>;
+
+export default worker;

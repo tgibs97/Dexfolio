@@ -29,6 +29,10 @@
   "vars": {
     "ALLOWED_ORIGIN": "https://dexfolio.trentagibson.workers.dev",
   },
+  "triggers": {
+    // Refresh saved card prices every day at 12:00 UTC.
+    "crons": ["0 12 * * *"],
+  },
   "observability": {
     "enabled": true,
   },

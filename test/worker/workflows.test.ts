@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { env } from 'cloudflare:workers';
+import { createExecutionContext, createScheduledController } from 'cloudflare:test';
 import type { CollectionArchiveManifest } from '../../shared/types';
 import app from '../../worker/index';
 import { createZipStream, readStoredZip } from '../../worker/zip';
@@ -268,6 +269,52 @@ describe('collection card workflows', () => {
     expect(
       await env.DB.prepare('SELECT COUNT(*) AS count FROM catalog_price_history').first<{ count: number }>(),
     ).toEqual({ count: 4 });
+  });
+
+  it('refreshes saved pricing snapshots from the daily schedule', async () => {
+    const headers = await authenticatedHeaders();
+    await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Bulbasaur') }, headers);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          data: [
+            {
+              id: 'base1-44',
+              name: 'Bulbasaur',
+              number: '44',
+              rarity: 'Common',
+              tcgplayer: {
+                url: 'https://prices.pokemontcg.io/tcgplayer/base1-44-daily',
+                updatedAt: '2026/07/17',
+                prices: { normal: { low: 3.25, mid: 4.25, high: 5.25, market: 4 } },
+              },
+            },
+          ],
+        }),
+      ),
+    );
+
+    await app.scheduled(
+      createScheduledController({ cron: '0 12 * * *', scheduledTime: Date.UTC(2026, 6, 17, 12) }),
+      env,
+      createExecutionContext(),
+    );
+
+    const detail = (await (await request('/api/pokemon/1', {}, headers)).json()) as any;
+    expect(detail.currentCard).toMatchObject({
+      marketPriceCents: 400,
+      lowPriceCents: 325,
+      midPriceCents: 425,
+      highPriceCents: 525,
+      priceUpdatedAt: '2026/07/17',
+      tcgplayerUrl: 'https://prices.pokemontcg.io/tcgplayer/base1-44-daily',
+    });
+    expect(
+      await env.DB.prepare(
+        "SELECT market_price_cents, source_updated_at FROM catalog_price_history WHERE source_updated_at = '2026/07/17'",
+      ).first(),
+    ).toEqual({ market_price_cents: 400, source_updated_at: '2026/07/17' });
   });
 
   it('summarizes current-card spending, value, average, and cost extremes', async () => {
