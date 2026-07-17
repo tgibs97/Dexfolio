@@ -6,11 +6,13 @@ import type { CatalogCard, CatalogSet } from '../shared/types';
  */
 export function findSetByName(sets: CatalogSet[], name: string): CatalogSet | null {
   const normalized = normalizeSetName(name);
+  const identifier = name.trim().toLocaleLowerCase();
   return (
     sets.find(
       (set) =>
         normalizeSetName(set.name) === normalized ||
-        set.code.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase(),
+        set.code.trim().toLocaleLowerCase() === identifier ||
+        set.id.trim().toLocaleLowerCase() === identifier,
     ) ?? null
   );
 }
@@ -55,10 +57,11 @@ export function searchCatalogSets(sets: CatalogSet[], query: string, limit = 8):
     .map((set) => {
       const name = normalizeSetName(set.name);
       const code = set.code.toLocaleLowerCase();
+      const id = set.id.toLocaleLowerCase();
       let score = Number.POSITIVE_INFINITY;
       if (name.startsWith(normalizedQuery)) score = 0;
       else if (name.includes(normalizedQuery)) score = 1;
-      else if (code.startsWith(normalizedQuery)) score = 2;
+      else if (code.startsWith(normalizedQuery) || id.startsWith(normalizedQuery)) score = 2;
       else if (tokens.length && tokens.every((token) => name.includes(token))) score = 3;
       else if (tokens.some((token) => name.includes(token))) score = 4;
       return { set, score };

@@ -6,6 +6,12 @@ const sets: CatalogSet[] = [
   { id: 'base1', name: 'Base', code: 'BS', releaseDate: '1999/01/09' },
   { id: 'sv1', name: 'Scarlet & Violet', code: 'SVI', releaseDate: '2023/03/31' },
 ];
+const promoSet: CatalogSet = {
+  id: 'svp',
+  name: 'Scarlet & Violet Black Star Promos',
+  code: 'PR-SV',
+  releaseDate: '2023/01/01',
+};
 const cards: CatalogCard[] = [
   {
     id: 'base1-44',
@@ -36,6 +42,7 @@ describe('catalog matching', () => {
     expect(findSetByName(sets, 'scarlet & violet')).toMatchObject({ id: 'sv1', code: 'SVI' });
     expect(findSetByName(sets, 'Base Set')).toMatchObject({ id: 'base1', code: 'BS' });
     expect(findSetByName(sets, 'SVI')).toMatchObject({ id: 'sv1' });
+    expect(findSetByName([...sets, promoSet], 'SVP')).toMatchObject({ id: 'svp', code: 'PR-SV' });
     expect(findSetByName(sets, 'scar')).toBeNull();
   });
 
@@ -48,6 +55,7 @@ describe('catalog matching', () => {
     expect(
       searchCatalogSets([...sets, { id: 'blk', name: 'Black Bolt', code: 'BLK', releaseDate: null }], 'pitch bla'),
     ).toEqual([{ id: 'blk', name: 'Black Bolt', code: 'BLK', releaseDate: null }]);
+    expect(searchCatalogSets([...sets, promoSet], 'SVP')).toEqual([promoSet]);
     expect(searchCatalogCards(cards, 'alt', 'name')).toEqual([cards[1]]);
     expect(searchCatalogCards(cards, '44', 'number')).toHaveLength(2);
   });
