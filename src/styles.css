@@ -735,6 +735,10 @@ div.admin-result {
 }
 .slot-card {
   appearance: none;
+  /* Keep the full Pokédex navigable while skipping layout and paint work for
+     the hundreds of cards that are still far outside the mobile viewport. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 300px;
   border: 1px solid #d8d3c8;
   border-radius: 14px;
   background: var(--paper);
@@ -908,6 +912,10 @@ div.admin-result {
 }
 .binder-list tr:hover {
   background: #faf7ef;
+}
+.binder-list tbody tr {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
 }
 .binder-list td > small,
 .binder-list td > strong {
