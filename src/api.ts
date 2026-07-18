@@ -85,7 +85,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password }),
     }),
-  guest: () => request<SessionResponse>('/api/session/guest', { method: 'POST' }),
+  guest: (password: string) =>
+    request<SessionResponse>('/api/session/guest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    }),
   logout: () => request<SessionResponse>('/api/session', { method: 'DELETE' }),
   binder: (filters: { q: string; status: string; generation: string; sort: SortOption }, signal?: AbortSignal) => {
     const query = new URLSearchParams();

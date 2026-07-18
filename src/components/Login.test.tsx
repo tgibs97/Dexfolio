@@ -9,14 +9,15 @@ afterEach(() => {
 });
 
 describe('Login', () => {
-  it('opens a view-only guest session without a password', async () => {
+  it('opens a view-only guest session with the guest password', async () => {
     const onAuthenticated = vi.fn();
     const guest = vi.spyOn(api, 'guest').mockResolvedValue({ authenticated: true, role: 'guest' });
 
     render(<Login onAuthenticated={onAuthenticated} />);
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'guest password' } });
     fireEvent.click(screen.getByRole('button', { name: 'View as guest' }));
 
-    await waitFor(() => expect(guest).toHaveBeenCalledOnce());
+    await waitFor(() => expect(guest).toHaveBeenCalledWith('guest password'));
     expect(onAuthenticated).toHaveBeenCalledWith('guest');
   });
 
@@ -25,7 +26,7 @@ describe('Login', () => {
     vi.spyOn(api, 'login').mockResolvedValue({ authenticated: true, role: 'admin' });
 
     render(<Login onAuthenticated={onAuthenticated} />);
-    fireEvent.change(screen.getByLabelText('Collection password'), { target: { value: 'owner password' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'owner password' } });
     fireEvent.click(screen.getByRole('button', { name: 'Login' }));
 
     await waitFor(() => expect(onAuthenticated).toHaveBeenCalledWith('admin'));

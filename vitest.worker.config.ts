@@ -17,6 +17,7 @@ export default defineConfig({
         serviceBindings: { ASSETS: () => new Response('Not found', { status: 404 }) },
         bindings: {
           ADMIN_PASSWORD: 'correct-horse-battery-staple',
+          GUEST_PASSWORD: 'guest-pass1',
           SESSION_SECRET: 'this-is-a-test-secret-with-more-than-32-characters',
           ALLOWED_ORIGIN: 'http://example.com',
           TEST_MIGRATIONS: await readD1Migrations(path.join(directory, 'migrations')),

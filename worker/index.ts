@@ -62,6 +62,17 @@ app.post('/api/session', async (c) => {
 });
 
 app.post('/api/session/guest', async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON request.' }, 400);
+  }
+  const parsed = loginSchema.safeParse(body);
+  if (!parsed.success) return c.json({ error: 'A password is required.' }, 400);
+  if (!(await credentialsAreValid(parsed.data.password, c.env.GUEST_PASSWORD, 11))) {
+    return c.json({ error: 'The password is incorrect.' }, 401);
+  }
   if (!c.env.SESSION_SECRET || c.env.SESSION_SECRET.length < 32) {
     return c.json({ error: 'SESSION_SECRET is not configured securely.' }, 503);
   }

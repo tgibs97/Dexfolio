@@ -15,13 +15,13 @@ Cloudflare Worker (Hono + Zod)
 - Vite builds the responsive React SPA. A single Worker serves its static assets and the API.
 - D1 stores imported PokéAPI reference records separately from user-entered collection records.
 - R2 objects use `cards/{pokemonId}/{uuid}.{extension}` keys, so replacement images never overwrite history.
-- An isolated authentication layer issues role-signed, `HttpOnly`, `SameSite=Strict` cookies for password-authenticated admins and public read-only guests. It can later be replaced by a user table or Cloudflare Access without changing collection logic.
+- An isolated authentication layer issues role-signed, `HttpOnly`, `SameSite=Strict` cookies for password-authenticated admins and read-only guests. It can later be replaced by a user table or Cloudflare Access without changing collection logic.
 - Prepared D1 statements and Zod schemas protect the data boundary. Mutating requests require an admin session and a same-origin/allowed-origin check; guest write attempts are rejected by the Worker.
 
 ## Features
 
 - Responsive card-grid and compact list binder views
-- Password-free guest mode for viewing the binder, card details, history, progress, and pricing without collection or Admin access
+- Password-protected guest mode for viewing the binder, card details, history, progress, and pricing without collection or Admin access
 - Search by name or exact Pokédex number; status/generation filters; number/name/date sorting
 - Overall and per-generation progress
 - Add, edit, replace, remove, restore, and inspect previous cards
@@ -80,10 +80,11 @@ After the initial seed, use **Admin → Update Pokédex** to check for newly rel
 
 2. Replace both all-zero D1 IDs in `wrangler.jsonc` with the IDs returned by Cloudflare. Set `ALLOWED_ORIGIN` to the final `https://…` application origin. The production and preview bucket names are already declared.
 
-3. Configure Worker secrets interactively. Use a unique password and a random session secret of at least 32 characters:
+3. Configure Worker secrets interactively. Use different passwords for admin (at least 12 characters) and guest (at least 11 characters), plus a random session secret of at least 32 characters:
 
    ```bash
    npx wrangler secret put ADMIN_PASSWORD
+   npx wrangler secret put GUEST_PASSWORD
    npx wrangler secret put SESSION_SECRET
    npx wrangler secret put POKETRACE_API_KEY
    ```
@@ -109,7 +110,7 @@ Create these GitHub repository secrets:
 - `CLOUDFLARE_ACCOUNT_ID`: the account ID shown in the Cloudflare dashboard.
 - `CLOUDFLARE_API_TOKEN`: a scoped token able to edit Workers, D1, and R2 for this account.
 
-Use GitHub's protected `production` environment to require approval if desired. Cloudflare secrets (`ADMIN_PASSWORD` and `SESSION_SECRET`) remain stored by Cloudflare and are not redeclared on each deploy.
+Use GitHub's protected `production` environment to require approval if desired. Cloudflare secrets (`ADMIN_PASSWORD`, `GUEST_PASSWORD`, and `SESSION_SECRET`) remain stored by Cloudflare and are not redeclared on each deploy.
 
 Pull requests are fully built and tested. Public preview URLs are intentionally not enabled by default because each preview needs an isolated D1 database, R2 bucket, and secrets. To add previews safely, create a Wrangler `preview` environment bound to the preview resources and add a PR workflow using `wrangler deploy --env preview`; do not point previews at production storage.
 
@@ -123,13 +124,13 @@ Replacing or restoring first archives the outgoing card, then switches the slot 
 
 ## Security notes
 
-- Do not expose the app until `ADMIN_PASSWORD`, `SESSION_SECRET`, and the final `ALLOWED_ORIGIN` are configured.
+- Do not expose the app until `ADMIN_PASSWORD`, `GUEST_PASSWORD`, `SESSION_SECRET`, and the final `ALLOWED_ORIGIN` are configured.
 - Admin and guest sessions expire after 14 days. Sign-out or exiting guest mode clears the cookie. All binder data and R2 image routes require one of these signed sessions.
 - Guest authorization is enforced by the Worker: guests may use read endpoints, but all writes and every `/api/admin/*` endpoint return `403`, even if called outside the UI.
 - Uploaded SVG and arbitrary files are rejected. JPEG, PNG, WebP, and GIF uploads are limited to 8 MB and checked by content signature.
 - Security headers include a restrictive Content Security Policy, `nosniff`, no-referrer policy, and HSTS on HTTPS.
 - D1 access uses bound prepared values; user-selected sorting maps to fixed SQL fragments.
-- The single shared password is appropriate for the initial owner-only deployment. Before multi-user use, add per-user identities, password hashing/account recovery or Cloudflare Access, ownership columns, authorization checks, login rate limiting, and audit logging.
+- The two shared passwords are appropriate for this initial owner/guest deployment. Before multi-user use, add per-user identities, password hashing/account recovery or Cloudflare Access, ownership columns, authorization checks, login rate limiting, and audit logging.
 
 ## Testing
 

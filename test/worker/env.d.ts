@@ -4,6 +4,7 @@ declare module 'cloudflare:workers' {
     CARD_IMAGES: R2Bucket;
     ASSETS: Fetcher;
     ADMIN_PASSWORD: string;
+    GUEST_PASSWORD: string;
     SESSION_SECRET: string;
     ALLOWED_ORIGIN: string;
     TEST_MIGRATIONS: D1Migration[];

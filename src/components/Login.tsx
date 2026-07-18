@@ -2,7 +2,7 @@ import { type FormEvent, useState } from 'react';
 import type { SessionRole } from '../../shared/types';
 import { api, ApiRequestError } from '../api';
 
-/** Offers owner authentication and public, view-only guest access. */
+/** Offers password-protected owner and view-only guest access. */
 export function Login({ onAuthenticated }: { onAuthenticated: (role: SessionRole) => void }) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -26,7 +26,7 @@ export function Login({ onAuthenticated }: { onAuthenticated: (role: SessionRole
     setSubmitting('guest');
     setError('');
     try {
-      const session = await api.guest();
+      const session = await api.guest(password);
       if (session.role) onAuthenticated(session.role);
     } catch (reason) {
       setError(reason instanceof ApiRequestError ? reason.message : 'Unable to open guest view.');
@@ -44,7 +44,7 @@ export function Login({ onAuthenticated }: { onAuthenticated: (role: SessionRole
         <h1 id="login-title">Welcome to Dexfolio</h1>
         <p className="muted">Trent's complete Pokédex card binder, kept in one quiet corner of the web.</p>
         <form onSubmit={submit}>
-          <label htmlFor="password">Collection password</label>
+          <label htmlFor="password">Password</label>
           <input
             id="password"
             type="password"
@@ -54,6 +54,9 @@ export function Login({ onAuthenticated }: { onAuthenticated: (role: SessionRole
             onChange={(event) => setPassword(event.target.value)}
             autoFocus
           />
+          <small className="field-hint">
+            Use the owner password to log in or the guest password for view-only access.
+          </small>
           {error && (
             <p className="form-error" role="alert">
               {error}

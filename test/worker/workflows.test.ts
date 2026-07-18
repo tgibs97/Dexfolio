@@ -41,7 +41,8 @@ async function guestHeaders(): Promise<HeadersInit> {
   const response = await app.fetch(
     new Request(`${origin}/api/session/guest`, {
       method: 'POST',
-      headers: { Origin: origin },
+      headers: { 'Content-Type': 'application/json', Origin: origin },
+      body: JSON.stringify({ password: 'guest-pass1' }),
     }),
     env,
   );
@@ -89,6 +90,31 @@ function archiveManifest(archive: ArrayBuffer): CollectionArchiveManifest {
 }
 
 describe('collection card workflows', () => {
+  it('requires the configured password for guest sessions', async () => {
+    const missing = await app.fetch(
+      new Request(`${origin}/api/session/guest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: origin },
+        body: JSON.stringify({}),
+      }),
+      env,
+    );
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({ error: 'A password is required.' });
+
+    const incorrect = await app.fetch(
+      new Request(`${origin}/api/session/guest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: origin },
+        body: JSON.stringify({ password: 'wrong-password' }),
+      }),
+      env,
+    );
+    expect(incorrect.status).toBe(401);
+    expect(await incorrect.json()).toEqual({ error: 'The password is incorrect.' });
+    expect(incorrect.headers.get('Set-Cookie')).toBeNull();
+  });
+
   it('allows guests to read the binder but blocks writes and Admin endpoints', async () => {
     const headers = await guestHeaders();
 

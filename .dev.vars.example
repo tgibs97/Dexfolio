@@ -1,5 +1,7 @@
 # Copy this file to .dev.vars. Never commit the real values.
+# Use at least 12 characters for admin and at least 11 for guest.
 ADMIN_PASSWORD=replace-with-a-long-unique-password
+GUEST_PASSWORD=replace-with-a-different-long-unique-password
 SESSION_SECRET=replace-with-at-least-32-random-characters
 ALLOWED_ORIGIN=http://localhost:5173
 # Get a key from https://poketrace.com/dashboard for catalog and price data.

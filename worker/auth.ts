@@ -33,8 +33,8 @@ async function safeEqual(left: string, right: string): Promise<boolean> {
   return difference === 0;
 }
 
-export async function credentialsAreValid(provided: string, expected: string): Promise<boolean> {
-  if (!expected || expected.length < 12) return false;
+export async function credentialsAreValid(provided: string, expected: string, minimumLength = 12): Promise<boolean> {
+  if (!expected || expected.length < minimumLength) return false;
   return safeEqual(provided, expected);
 }
 
