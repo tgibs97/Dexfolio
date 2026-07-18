@@ -27,7 +27,7 @@ Cloudflare Worker (Hono + Zod)
 - Add, edit, replace, remove, restore, and inspect previous cards
 - Versioned ZIP backup/restore for collection records, pricing history, and private card photos
 - Mobile camera capture, local preview, large-photo optimization, 8 MB server limit, MIME and file-signature validation
-- Cached Pokémon TCG set/card autocomplete with set-code and rarity autofill
+- D1-backed English set autocomplete with daily refresh and stale fallback, plus cached card suggestions
 - Explicit Admin-page Pokédex update checks and safe synchronization of newly released species
 - Admin-visible D1 activity logs for outbound API attempts, with a persistent logging on/off switch
 - Accessible native dialogs, labels, keyboard controls, loading/empty/error states, notifications, and destructive confirmations
@@ -86,10 +86,11 @@ After the initial seed, use **Admin → Update Pokédex** to check for newly rel
    npx wrangler secret put ADMIN_PASSWORD
    npx wrangler secret put GUEST_PASSWORD
    npx wrangler secret put SESSION_SECRET
+   npx wrangler secret put POKEMON_TCG_API_KEY
    npx wrangler secret put POKETRACE_API_KEY
    ```
 
-   Create the catalog key in the [PokeTrace dashboard](https://poketrace.com/dashboard). Never put any real secret in `wrangler.jsonc`, `.dev.vars.example`, GitHub Actions YAML, or Git.
+   Create the English catalog key in the [Pokémon TCG developer portal](https://dev.pokemontcg.io) and the international catalog key in the [PokeTrace dashboard](https://poketrace.com/dashboard). Never put any real secret in `wrangler.jsonc`, `.dev.vars.example`, GitHub Actions YAML, or Git.
 
 4. Initialize the database and perform the first deployment:
 
@@ -110,7 +111,7 @@ Create these GitHub repository secrets:
 - `CLOUDFLARE_ACCOUNT_ID`: the account ID shown in the Cloudflare dashboard.
 - `CLOUDFLARE_API_TOKEN`: a scoped token able to edit Workers, D1, and R2 for this account.
 
-Use GitHub's protected `production` environment to require approval if desired. Cloudflare secrets (`ADMIN_PASSWORD`, `GUEST_PASSWORD`, and `SESSION_SECRET`) remain stored by Cloudflare and are not redeclared on each deploy.
+Use GitHub's protected `production` environment to require approval if desired. Cloudflare secrets (`ADMIN_PASSWORD`, `GUEST_PASSWORD`, `SESSION_SECRET`, `POKEMON_TCG_API_KEY`, and `POKETRACE_API_KEY`) remain stored by Cloudflare and are not redeclared on each deploy.
 
 Pull requests are fully built and tested. Public preview URLs are intentionally not enabled by default because each preview needs an isolated D1 database, R2 bucket, and secrets. To add previews safely, create a Wrangler `preview` environment bound to the preview resources and add a PR workflow using `wrangler deploy --env preview`; do not point previews at production storage.
 
@@ -119,6 +120,8 @@ Pull requests are fully built and tested. Public preview URLs are intentionally 
 `pokemon` contains general reference records. `collection_slots` owns the stable binder position and current-card pointer. `owned_cards` contains user-entered records; a partial unique index permits only one current card per Pokémon.
 
 `external_api_logs` records real outbound provider attempts, including retries, response status, duration, and failures. Cache hits are excluded, API keys and headers are never stored, and logging can be disabled from Admin without deleting existing history.
+
+`catalog_cache` stores the last successful English set list as one versioned JSON snapshot. Form requests use that durable snapshot without contacting the provider; the daily cron replaces it only after a successful authenticated refresh, so an outage leaves the previous list available.
 
 Replacing or restoring first archives the outgoing card, then switches the slot pointer in one D1 batch. Removing a card archives it with a `removed` reason and returns the slot to Missing. Images for archived cards remain in R2 so history stays viewable and restorable. Editing an image only replaces the image belonging to that same card record and removes the superseded R2 object after the database update succeeds.
 

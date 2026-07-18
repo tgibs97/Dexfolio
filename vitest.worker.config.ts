@@ -20,6 +20,7 @@ export default defineConfig({
           GUEST_PASSWORD: 'guest-pass1',
           SESSION_SECRET: 'this-is-a-test-secret-with-more-than-32-characters',
           ALLOWED_ORIGIN: 'http://example.com',
+          POKEMON_TCG_API_KEY: 'pokemon-tcg-test-key',
           TEST_MIGRATIONS: await readD1Migrations(path.join(directory, 'migrations')),
         },
       },

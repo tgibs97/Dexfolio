@@ -2,7 +2,7 @@ import { type Context, Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
 import type { CatalogPrice, PriceHistoryRange, PriceRefreshResponse, SortOption } from '../shared/types';
 import { clearSession, createSession, credentialsAreValid, getSessionRole, hasAllowedOrigin } from './auth';
-import { getCatalogCardRefreshByIds, getCatalogCards, getCatalogSets } from './catalog';
+import { getCatalogCardRefreshByIds, getCatalogCards, getCatalogSets, refreshEnglishCatalogSets } from './catalog';
 import { exportCollectionArchive, importCollectionArchive } from './dataArchive';
 import { CollectionBackupError } from './dataTransfer';
 import { getCardPriceHistory, getCardRow, getPokemonDetail, listPokemon } from './db';
@@ -649,21 +649,38 @@ function imageErrorResponse(c: Context<{ Bindings: Env }>, error: unknown) {
 const worker = {
   fetch: app.fetch,
   async scheduled(controller: ScheduledController, env: Env) {
+    const schedule = {
+      cron: controller.cron,
+      scheduledTime: new Date(controller.scheduledTime).toISOString(),
+    };
+    const failures: unknown[] = [];
+    try {
+      const sets = await refreshEnglishCatalogSets(env);
+      console.log(JSON.stringify({ message: 'Daily English set refresh complete', ...schedule, sets: sets.length }));
+    } catch (error) {
+      failures.push(error);
+      console.error(
+        JSON.stringify({
+          message: 'Daily English set refresh failed',
+          ...schedule,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    }
     try {
       const result = await refreshOwnedCardPrices(env);
-      console.log('Daily pricing refresh complete', {
-        cron: controller.cron,
-        scheduledTime: new Date(controller.scheduledTime).toISOString(),
-        ...result,
-      });
+      console.log(JSON.stringify({ message: 'Daily pricing refresh complete', ...schedule, ...result }));
     } catch (error) {
-      console.error('Daily pricing refresh failed', {
-        cron: controller.cron,
-        scheduledTime: new Date(controller.scheduledTime).toISOString(),
-        error,
-      });
-      throw error;
+      failures.push(error);
+      console.error(
+        JSON.stringify({
+          message: 'Daily pricing refresh failed',
+          ...schedule,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
     }
+    if (failures.length) throw new Error('One or more daily maintenance tasks failed.');
   },
 } satisfies ExportedHandler<Env>;
 

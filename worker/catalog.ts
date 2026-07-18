@@ -1,4 +1,5 @@
 import type { CatalogCard, CatalogPrice, CatalogSet } from '../shared/types';
+import { readEnglishSetCatalog, writeEnglishSetCatalog } from './catalogCache';
 import type { Env } from './env';
 import { type ExternalApiRequestLogger, withExternalApiLogging } from './externalApiLogs';
 
@@ -226,6 +227,11 @@ export async function getCatalogSets(env: Env, language = 'English', search = ''
   return withExternalApiLogging(env.DB, (logger) => getCatalogSetsLogged(env, language, search, logger));
 }
 
+/** Refresh the durable English set snapshot independently from form traffic. */
+export async function refreshEnglishCatalogSets(env: Env): Promise<CatalogSet[]> {
+  return withExternalApiLogging(env.DB, (logger) => fetchAndStoreEnglishCatalogSets(env, logger, false));
+}
+
 async function getCatalogSetsLogged(
   env: Env,
   language: string,
@@ -260,15 +266,25 @@ async function getCatalogSetsLogged(
       .map((set) => ({ id: set.id, name: set.name, code: set.id, releaseDate: null }));
   }
 
+  const cached = env.DB ? await readEnglishSetCatalog(env.DB) : null;
+  if (cached) return cached.sets;
+  return fetchAndStoreEnglishCatalogSets(env, logger, true);
+}
+
+async function fetchAndStoreEnglishCatalogSets(
+  env: Env,
+  logger: ExternalApiRequestLogger,
+  readCache: boolean,
+): Promise<CatalogSet[]> {
   const body = await fetchCatalog<TcgSet>(
     '/sets',
     { pageSize: '250', orderBy: '-releaseDate', select: 'id,name,ptcgoCode,releaseDate' },
     env,
     24 * 60 * 60,
-    true,
+    readCache,
     logger,
   );
-  return body.data
+  const sets = body.data
     .filter((set) => set.id && set.name)
     .map((set) => ({
       id: set.id,
@@ -276,6 +292,9 @@ async function getCatalogSetsLogged(
       code: set.ptcgoCode || set.id,
       releaseDate: set.releaseDate || null,
     }));
+  if (!sets.length) throw new CatalogUnavailableError('Pokémon TCG API returned an empty set list.');
+  if (env.DB) await writeEnglishSetCatalog(env.DB, sets);
+  return sets;
 }
 
 /** Fetch only cards for this binder species in the selected expansion. */
@@ -881,6 +900,7 @@ async function fetchCatalog<T>(
   }
 
   const headers = new Headers({ Accept: 'application/json' });
+  if (env.POKEMON_TCG_API_KEY?.trim()) headers.set('X-Api-Key', env.POKEMON_TCG_API_KEY.trim());
   const response = await fetchWithRetry(url, headers, 'Pokémon TCG API', logger);
 
   const body = (await response.json()) as TcgApiResponse<T>;

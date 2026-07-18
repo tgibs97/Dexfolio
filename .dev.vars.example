@@ -4,6 +4,8 @@ ADMIN_PASSWORD=replace-with-a-long-unique-password
 GUEST_PASSWORD=replace-with-a-different-long-unique-password
 SESSION_SECRET=replace-with-at-least-32-random-characters
 ALLOWED_ORIGIN=http://localhost:5173
+# Get a key from https://dev.pokemontcg.io for English catalog and price data.
+POKEMON_TCG_API_KEY=
 # Get a key from https://poketrace.com/dashboard for catalog and price data.
 # Keep the real key in .dev.vars locally and a Wrangler secret in production.
 POKETRACE_API_KEY=

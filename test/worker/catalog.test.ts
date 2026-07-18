@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { env } from 'cloudflare:workers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   getCatalogCardRefreshByIds,
   getCatalogCards,
   getCatalogCardsByIds,
   getCatalogSets,
+  refreshEnglishCatalogSets,
 } from '../../worker/catalog';
 import type { Env } from '../../worker/env';
 
@@ -13,8 +15,14 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+beforeEach(async () => {
+  await env.DB.prepare('DELETE FROM catalog_cache').run();
+});
+
 function stubCatalog(responseData: unknown[]) {
-  const fetchMock = vi.fn(async () => Response.json({ data: responseData }));
+  const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(async () =>
+    Response.json({ data: responseData }),
+  );
   vi.stubGlobal('fetch', fetchMock);
   vi.stubGlobal('caches', { default: { match: vi.fn(async () => null), put: vi.fn(async () => undefined) } });
   return fetchMock;
@@ -30,6 +38,28 @@ describe('Pokémon catalog providers', () => {
       { id: 'base1', name: 'Base', code: 'BS', releaseDate: '1999/01/09' },
       { id: 'custom1', name: 'Custom', code: 'custom1', releaseDate: null },
     ]);
+  });
+
+  it('authenticates the English set request and serves the durable snapshot during an outage', async () => {
+    const fetchMock = stubCatalog([
+      { id: 'base1', name: 'Base', ptcgoCode: 'BS', releaseDate: '1999/01/09' },
+      { id: 'sv10', name: 'Destined Rivals', releaseDate: '2025/05/30' },
+    ]);
+
+    const initial = await getCatalogSets(env);
+    expect(initial).toHaveLength(2);
+    expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get('X-Api-Key')).toBe('pokemon-tcg-test-key');
+    expect(
+      await env.DB.prepare('SELECT refreshed_at FROM catalog_cache WHERE cache_key = ?')
+        .bind('pokemon-tcg:english-sets:v1')
+        .first(),
+    ).toEqual({ refreshed_at: expect.any(String) });
+
+    vi.stubGlobal('scheduler', { wait: vi.fn(async () => undefined) });
+    fetchMock.mockResolvedValue(new Response(null, { status: 429 }));
+    await expect(refreshEnglishCatalogSets(env)).rejects.toThrow('Pokémon TCG API returned 429.');
+    await expect(getCatalogSets(env)).resolves.toEqual(initial);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('finds Japanese sets by their regional code through PokeTrace', async () => {

@@ -13,6 +13,7 @@ beforeEach(async () => {
   await env.DB.batch([
     env.DB.prepare('DELETE FROM external_api_logs'),
     env.DB.prepare("UPDATE app_settings SET value = '1' WHERE key = 'external_api_logging_enabled'"),
+    env.DB.prepare('DELETE FROM catalog_cache'),
     env.DB.prepare('DELETE FROM catalog_price_history'),
     env.DB.prepare('DELETE FROM owned_cards'),
     env.DB.prepare('DELETE FROM collection_slots'),
@@ -254,8 +255,14 @@ describe('collection card workflows', () => {
     await env.DB.prepare("UPDATE owned_cards SET printing = 'Illustration rare'").run();
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        Response.json({
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = new URL(String(input));
+        if (url.pathname === '/v2/sets') {
+          return Response.json({
+            data: [{ id: 'base1', name: 'Base', ptcgoCode: 'BS', releaseDate: '1999/01/09' }],
+          });
+        }
+        return Response.json({
           data: [
             {
               id: 'base1-44',
@@ -269,8 +276,8 @@ describe('collection card workflows', () => {
               },
             },
           ],
-        }),
-      ),
+        });
+      }),
     );
 
     const response = await request('/api/admin/prices/refresh', { method: 'POST' }, headers);
@@ -369,8 +376,15 @@ describe('collection card workflows', () => {
     await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Bulbasaur') }, headers);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () =>
-        Response.json({
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('/v2/sets')) {
+          return Response.json({
+            data: [{ id: 'base1', name: 'Base', ptcgoCode: 'BS', releaseDate: '1999/01/09' }],
+          });
+        }
+
+        return Response.json({
           data: [
             {
               id: 'base1-44',
@@ -384,8 +398,8 @@ describe('collection card workflows', () => {
               },
             },
           ],
-        }),
-      ),
+        });
+      }),
     );
 
     await app.scheduled(
@@ -408,6 +422,12 @@ describe('collection card workflows', () => {
         "SELECT market_price_cents, source_updated_at FROM catalog_price_history WHERE source_updated_at = '2026/07/17'",
       ).first(),
     ).toEqual({ market_price_cents: 400, source_updated_at: '2026/07/17' });
+    const setCache = await env.DB.prepare('SELECT payload FROM catalog_cache WHERE cache_key = ?')
+      .bind('pokemon-tcg:english-sets:v1')
+      .first<{ payload: string }>();
+    expect(JSON.parse(setCache!.payload)).toEqual([
+      { id: 'base1', name: 'Base', code: 'BS', releaseDate: '1999/01/09' },
+    ]);
   });
 
   it('summarizes current-card spending, value, average, and cost extremes', async () => {

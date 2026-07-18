@@ -7,6 +7,7 @@ declare module 'cloudflare:workers' {
     GUEST_PASSWORD: string;
     SESSION_SECRET: string;
     ALLOWED_ORIGIN: string;
+    POKEMON_TCG_API_KEY: string;
     TEST_MIGRATIONS: D1Migration[];
   }
 }
