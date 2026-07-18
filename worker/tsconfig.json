@@ -5,5 +5,5 @@
     "types": ["@cloudflare/workers-types", "vitest/globals"],
     "jsx": "react-jsx"
   },
-  "include": ["./**/*.ts", "../shared/**/*.ts"]
+  "include": ["./**/*.ts", "../shared/**/*.ts", "../worker-configuration.d.ts"]
 }

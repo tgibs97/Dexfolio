@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isSupportedMarketplaceUrl } from './marketplace';
 
 const optionalText = (length: number) => z.string().trim().max(length).optional().or(z.literal(''));
 const optionalCents = z
@@ -6,13 +7,13 @@ const optionalCents = z
   .trim()
   .optional()
   .refine((value) => !value || /^\d{1,10}$/.test(value), 'Use a valid price snapshot');
-const optionalTcgplayerUrl = z
+const optionalMarketUrl = z
   .string()
   .trim()
   .max(500)
   .optional()
   .or(z.literal(''))
-  .refine((value) => !value || isTcgplayerUrl(value), 'Use a valid TCGplayer URL');
+  .refine((value) => !value || isSupportedMarketplaceUrl(value), 'Use a valid supported marketplace URL');
 
 export const loginSchema = z.object({ password: z.string().min(1).max(256) });
 
@@ -40,7 +41,7 @@ export const cardSchema = z.object({
   midPriceCents: optionalCents,
   highPriceCents: optionalCents,
   priceUpdatedAt: optionalText(40),
-  tcgplayerUrl: optionalTcgplayerUrl,
+  tcgplayerUrl: optionalMarketUrl,
   notes: optionalText(4000),
 });
 
@@ -79,18 +80,4 @@ export function priceToCents(price?: string): number | null {
 
 export function snapshotCents(value?: string): number | null {
   return value ? Number(value) : null;
-}
-
-function isTcgplayerUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === 'https:' &&
-      (url.hostname === 'prices.pokemontcg.io' ||
-        url.hostname === 'tcgplayer.com' ||
-        url.hostname.endsWith('.tcgplayer.com'))
-    );
-  } catch {
-    return false;
-  }
 }

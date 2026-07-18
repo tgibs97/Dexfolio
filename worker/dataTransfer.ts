@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isSupportedMarketplaceUrl } from './marketplace';
 import type {
   CollectionArchiveManifest,
   CollectionBackup,
@@ -31,7 +32,7 @@ const backupCardSchema = z
     midPriceCents: nullableCents,
     highPriceCents: nullableCents,
     priceUpdatedAt: nullableText(40),
-    tcgplayerUrl: nullableText(500).refine((value) => !value || isTcgplayerUrl(value)),
+    tcgplayerUrl: nullableText(500).refine((value) => !value || isSupportedMarketplaceUrl(value)),
     notes: nullableText(4000),
     isCurrent: z.boolean(),
     addedAt: timestamp,
@@ -260,20 +261,6 @@ function chunk<T>(values: T[], size: number): T[][] {
   return Array.from({ length: Math.ceil(values.length / size) }, (_, index) =>
     values.slice(index * size, index * size + size),
   );
-}
-
-function isTcgplayerUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (
-      url.protocol === 'https:' &&
-      (url.hostname === 'prices.pokemontcg.io' ||
-        url.hostname === 'tcgplayer.com' ||
-        url.hostname.endsWith('.tcgplayer.com'))
-    );
-  } catch {
-    return false;
-  }
 }
 
 interface BackupCardRow {

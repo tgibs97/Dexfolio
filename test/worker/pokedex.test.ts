@@ -8,6 +8,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 beforeEach(async () => {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM external_api_logs'),
+    env.DB.prepare("UPDATE app_settings SET value = '1' WHERE key = 'external_api_logging_enabled'"),
     env.DB.prepare('DELETE FROM owned_cards'),
     env.DB.prepare('DELETE FROM collection_slots'),
     env.DB.prepare('DELETE FROM pokemon'),
@@ -39,6 +41,53 @@ function resource(type: string, id: number, name: string) {
 }
 
 describe('Pokédex synchronization', () => {
+  it('logs external requests and honors the admin logging switch', async () => {
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        return calls === 1 ? new Response(null, { status: 503 }) : Response.json({ count: 2, results: [] });
+      }),
+    );
+    const headers = await authenticatedHeaders();
+
+    expect((await request('/api/admin/pokedex/status', {}, headers)).status).toBe(200);
+    const activityResponse = await request('/api/admin/external-api-logs', {}, headers);
+    expect(activityResponse.status).toBe(200);
+    expect(await activityResponse.json()).toMatchObject({
+      enabled: true,
+      total: 2,
+      logs: [
+        {
+          provider: 'PokéAPI',
+          method: 'GET',
+          statusCode: 200,
+          success: true,
+        },
+        {
+          provider: 'PokéAPI',
+          method: 'GET',
+          statusCode: 503,
+          success: false,
+        },
+      ],
+      nextBeforeId: null,
+    });
+
+    const disableResponse = await request(
+      '/api/admin/external-api-logging',
+      { method: 'PUT', body: JSON.stringify({ enabled: false }) },
+      headers,
+    );
+    expect(await disableResponse.json()).toEqual({ enabled: false });
+    expect((await request('/api/admin/pokedex/status', {}, headers)).status).toBe(200);
+    expect(await (await request('/api/admin/external-api-logs', {}, headers)).json()).toMatchObject({
+      enabled: false,
+      total: 2,
+    });
+  });
+
   it('checks for and explicitly inserts only new species with binder slots', async () => {
     const species = [
       resource('pokemon-species', 1, 'changed-bulbasaur'),

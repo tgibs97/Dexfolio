@@ -120,7 +120,7 @@ export interface CardInput {
   notes?: string;
 }
 
-/** Lightweight Pokémon TCG catalog records used only for form suggestions. */
+/** Lightweight multilingual Pokémon TCG catalog records used only for form suggestions. */
 export interface CatalogSet {
   id: string;
   name: string;
@@ -140,7 +140,7 @@ export interface CatalogCard {
   tcgplayerUrl: string | null;
 }
 
-/** A TCGplayer price snapshot for one physical printing of a catalog card. */
+/** A marketplace price snapshot for one physical printing of a catalog card. */
 export interface CatalogPrice {
   printing: string;
   lowCents: number | null;
@@ -162,7 +162,27 @@ export interface PriceRefreshResponse {
   refreshed: number;
   missingCatalogId: number;
   missingPricing: number;
+  deferred: number;
   refreshedAt: string;
+}
+
+export interface ExternalApiLogEntry {
+  id: number;
+  provider: string;
+  method: string;
+  url: string;
+  statusCode: number | null;
+  success: boolean;
+  durationMs: number;
+  errorMessage: string | null;
+  requestedAt: string;
+}
+
+export interface ExternalApiActivityResponse {
+  enabled: boolean;
+  total: number;
+  logs: ExternalApiLogEntry[];
+  nextBeforeId: number | null;
 }
 
 export interface PokedexSyncStatus {

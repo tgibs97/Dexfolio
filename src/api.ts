@@ -7,6 +7,7 @@ import type {
   CatalogCardsResponse,
   CatalogSetsResponse,
   CollectionImportResponse,
+  ExternalApiActivityResponse,
   PokemonDetail,
   PokedexSyncResponse,
   PokedexSyncStatus,
@@ -18,7 +19,7 @@ import type {
 
 // Bump this when the lightweight catalog response shape changes so browsers do
 // not reuse an older private HTTP-cache entry with missing fields.
-const CATALOG_SCHEMA_VERSION = '6';
+const CATALOG_SCHEMA_VERSION = '8';
 
 /**
  * Error shape exposed to components. `fieldErrors` lets a form put server-side
@@ -99,11 +100,23 @@ export const api = {
     request<CardPriceHistoryResponse>(`/api/cards/${encodeURIComponent(cardId)}/price-history?range=${range}`, {
       signal,
     }),
-  catalogSets: (signal?: AbortSignal) => request<CatalogSetsResponse>('/api/catalog/sets', { signal }),
-  catalogCards: (setId: string, pokemonNumber: number, signal?: AbortSignal) => {
+  catalogSets: (language = 'English', search = '', signal?: AbortSignal) => {
+    const query = new URLSearchParams({ language });
+    if (search.trim()) query.set('q', search.trim());
+    return request<CatalogSetsResponse>(`/api/catalog/sets?${query}`, { signal });
+  },
+  catalogCards: (
+    setId: string,
+    pokemonNumber: number,
+    pokemonName: string,
+    language = 'English',
+    signal?: AbortSignal,
+  ) => {
     const query = new URLSearchParams({
       setId,
       pokemonNumber: String(pokemonNumber),
+      pokemonName,
+      language,
       catalogVersion: CATALOG_SCHEMA_VERSION,
     });
     return request<CatalogCardsResponse>(`/api/catalog/cards?${query}`, { signal }).then(({ cards }) => ({
@@ -144,6 +157,16 @@ export const api = {
   pokedexSyncStatus: () => request<PokedexSyncStatus>('/api/admin/pokedex/status'),
   syncPokedex: () => request<PokedexSyncResponse>('/api/admin/pokedex/sync', { method: 'POST' }),
   refreshPrices: () => request<PriceRefreshResponse>('/api/admin/prices/refresh', { method: 'POST' }),
+  externalApiActivity: (beforeId?: number) => {
+    const query = beforeId ? `?beforeId=${beforeId}` : '';
+    return request<ExternalApiActivityResponse>(`/api/admin/external-api-logs${query}`);
+  },
+  setExternalApiLogging: (enabled: boolean) =>
+    request<{ enabled: boolean }>('/api/admin/external-api-logging', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    }),
   exportData: () => downloadRequest('/api/admin/data/export'),
   importData: (file: File) =>
     request<CollectionImportResponse>('/api/admin/data/import', {

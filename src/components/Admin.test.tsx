@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../api';
 import { Admin } from './Admin';
 
@@ -9,7 +9,47 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+beforeEach(() => {
+  vi.spyOn(api, 'externalApiActivity').mockResolvedValue({
+    enabled: true,
+    total: 0,
+    logs: [],
+    nextBeforeId: null,
+  });
+  vi.spyOn(api, 'setExternalApiLogging').mockImplementation(async (enabled) => ({ enabled }));
+});
+
 describe('Admin', () => {
+  it('shows external API activity and turns logging off', async () => {
+    vi.mocked(api.externalApiActivity).mockResolvedValue({
+      enabled: true,
+      total: 1,
+      logs: [
+        {
+          id: 12,
+          provider: 'PokéAPI',
+          method: 'GET',
+          url: 'https://pokeapi.co/api/v2/pokemon-species?limit=1',
+          statusCode: 200,
+          success: true,
+          durationMs: 143,
+          errorMessage: null,
+          requestedAt: '2026-07-18T12:00:00.000Z',
+        },
+      ],
+      nextBeforeId: null,
+    });
+
+    render(<Admin onDataChanged={vi.fn()} />);
+
+    expect(await screen.findByText('PokéAPI')).toBeInTheDocument();
+    expect(screen.getByText('143 ms')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Logging on' }));
+
+    await waitFor(() => expect(api.setExternalApiLogging).toHaveBeenCalledWith(false));
+    expect(await screen.findByText('Logging off')).toBeInTheDocument();
+  });
+
   it('refreshes pricing and reports updated and skipped cards', async () => {
     const onDataChanged = vi.fn();
     vi.spyOn(api, 'refreshPrices').mockResolvedValue({
@@ -17,6 +57,7 @@ describe('Admin', () => {
       refreshed: 6,
       missingCatalogId: 1,
       missingPricing: 1,
+      deferred: 0,
       refreshedAt: '2026-07-16T17:00:00.000Z',
     });
 

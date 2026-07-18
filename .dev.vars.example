@@ -2,6 +2,6 @@
 ADMIN_PASSWORD=replace-with-a-long-unique-password
 SESSION_SECRET=replace-with-at-least-32-random-characters
 ALLOWED_ORIGIN=http://localhost:5173
-# Optional: get a key from https://dev.pokemontcg.io/ to raise autocomplete rate limits.
-# Keep real keys secret.
-# POKEMON_TCG_API_KEY=
+# Get a key from https://poketrace.com/dashboard for catalog and price data.
+# Keep the real key in .dev.vars locally and a Wrangler secret in production.
+POKETRACE_API_KEY=

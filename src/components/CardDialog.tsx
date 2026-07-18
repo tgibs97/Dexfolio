@@ -222,7 +222,7 @@ function CardDetails({
             value={card.purchasePriceCents === null ? null : `$${(card.purchasePriceCents / 100).toFixed(2)}`}
           />
           <Info
-            label="TCGplayer market"
+            label="Market value"
             value={
               card.marketPriceCents !== null && card.tcgplayerUrl ? (
                 <a className="market-link" href={card.tcgplayerUrl} target="_blank" rel="noreferrer">
@@ -313,7 +313,7 @@ function GuestMissingCard({ detail }: { detail: PokemonDetail }) {
   );
 }
 
-/** Loads stored TCGplayer snapshots and visualizes one card's market movement. */
+/** Loads stored marketplace snapshots and visualizes one card's market movement. */
 function PriceHistoryPanel({ card }: { card: OwnedCard }) {
   const [range, setRange] = useState<PriceHistoryRange>('90d');
   const [result, setResult] = useState<{
@@ -355,7 +355,7 @@ function PriceHistoryPanel({ card }: { card: OwnedCard }) {
     <section className="price-history-panel" aria-labelledby={`price-history-${card.id}`}>
       <div className="price-history-heading">
         <div>
-          <p className="eyebrow">TCGplayer tracking</p>
+          <p className="eyebrow">Market tracking</p>
           <h3 id={`price-history-${card.id}`}>Price history</h3>
         </div>
         <div className="range-switch" aria-label="Price history range">
@@ -407,7 +407,7 @@ function PriceHistoryPanel({ card }: { card: OwnedCard }) {
         </p>
       ) : marketPointCount < 2 ? (
         <p className="price-history-empty">
-          One snapshot is saved. The chart and market changes will appear after another TCGplayer price update.
+          One snapshot is saved. The chart and market changes will appear after another marketplace price update.
         </p>
       ) : (
         <MarketPriceChart history={history?.history ?? []} />
@@ -456,7 +456,7 @@ function MarketPriceChart({ history }: { history: PriceHistoryPoint[] }) {
 
   return (
     <div className="price-chart-wrap">
-      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="TCGplayer market price history chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Market price history chart">
         {[0, 0.5, 1].map((ratio) => {
           const gridY = padding.top + plotHeight * ratio;
           const value = max - (max - min) * ratio;
@@ -525,35 +525,65 @@ export function CardForm({
     inputRef.current = input;
   }, [input]);
 
+  const setLookupQuery =
+    input.language === 'Japanese' && /[^\p{ASCII}]/u.test(input.setName) && input.setCode
+      ? input.setCode
+      : input.language === 'Japanese'
+        ? input.setName
+        : '';
+
   // Set metadata is shared across species and cached by the Worker.
   useEffect(() => {
+    // A selected set already has the metadata needed to load cards. Avoid a
+    // delayed follow-up search that can re-arm the loading state for the same ID.
+    if (selectedSetId) return;
     const controller = new AbortController();
-    api
-      .catalogSets(controller.signal)
-      .then(({ sets }) => {
-        setCatalogSets(sets);
-        const match = findSetByName(sets, inputRef.current.setName);
-        if (match) {
-          setSelectedSetId(match.id);
-          setCardsLoading(true);
-          setInput((current) => ({ ...current, setCode: match.code }));
+    const timeout = window.setTimeout(
+      () => {
+        if (input.language === 'Japanese' && setLookupQuery.trim().length < 2) {
+          setCatalogSets([]);
+          setSetsLoading(false);
+          return;
         }
-      })
-      .catch((reason) => {
-        if (!(reason instanceof DOMException && reason.name === 'AbortError')) setCatalogUnavailable(true);
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setSetsLoading(false);
-      });
-    return () => controller.abort();
-  }, []);
+        setSetsLoading(true);
+        api
+          .catalogSets(input.language, setLookupQuery, controller.signal)
+          .then(({ sets }) => {
+            setCatalogSets(sets);
+            setCatalogUnavailable(false);
+            const nameMatch = findSetByName(sets, inputRef.current.setName);
+            const match = nameMatch || findSetByName(sets, inputRef.current.setCode || '');
+            if (match) {
+              setSelectedSetId(match.id);
+              setCardsLoading(true);
+              setInput((current) => ({
+                ...current,
+                setName: nameMatch ? current.setName : match.name,
+                setCode: match.code,
+              }));
+            }
+          })
+          .catch((reason) => {
+            if (!(reason instanceof DOMException && reason.name === 'AbortError')) setCatalogUnavailable(true);
+          })
+          .finally(() => {
+            if (!controller.signal.aborted) setSetsLoading(false);
+          });
+      },
+      input.language === 'Japanese' && setLookupQuery.trim().length >= 2 ? 350 : 0,
+    );
+    return () => {
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [input.language, selectedSetId, setLookupQuery]);
 
   // Once a set is selected, ask for cards featuring this binder slot's species.
   useEffect(() => {
     if (!selectedSetId) return;
     const controller = new AbortController();
     api
-      .catalogCards(selectedSetId, detail.nationalDexNumber, controller.signal)
+      .catalogCards(selectedSetId, detail.nationalDexNumber, detail.name, input.language, controller.signal)
       .then(({ cards }) => {
         setCatalogCards(cards);
         setCatalogUnavailable(false);
@@ -578,7 +608,7 @@ export function CardForm({
         if (!controller.signal.aborted) setCardsLoading(false);
       });
     return () => controller.abort();
-  }, [selectedSetId, detail.nationalDexNumber, catalogRetry, mode]);
+  }, [selectedSetId, detail.nationalDexNumber, detail.name, catalogRetry, mode, input.language]);
 
   // Object URLs hold browser memory, so release each generated preview on cleanup.
   useEffect(
@@ -588,6 +618,16 @@ export function CardForm({
     [preview],
   );
   const update = (key: keyof CardInput, value: string) => setInput((current) => ({ ...current, [key]: value }));
+
+  function changeLanguage(_key: keyof CardInput, value: string) {
+    setSetsLoading(true);
+    setCatalogUnavailable(false);
+    setCatalogSets([]);
+    setCatalogCards([]);
+    setSelectedSetId(null);
+    setCardsLoading(false);
+    setInput((current) => ({ ...clearCatalogSnapshot(current), language: value }));
+  }
 
   function changeSetName(_key: keyof CardInput, value: string) {
     const match = findSetByName(catalogSets, value);
@@ -701,7 +741,9 @@ export function CardForm({
     }
   }
 
-  const matchedCatalogCard = findCardMatch(catalogCards, input.cardName, input.cardNumber);
+  const matchedCatalogCard =
+    catalogCards.find((card) => card.id === input.catalogCardId) ||
+    findCardMatch(catalogCards, input.cardName, input.cardNumber);
   const catalogPrintingOptions = matchedCatalogCard?.availablePrintings ?? [];
   const printingOptions = catalogPrintingOptions.length
     ? [
@@ -763,7 +805,7 @@ export function CardForm({
           suggestions={searchCatalogCards(catalogCards, input.cardName, 'name').map((card) => ({
             id: card.id,
             value: card.name,
-            description: `#${card.number}${card.rarity ? ` · ${card.rarity}` : ''}`,
+            description: `#${card.number}${card.rarity ? ` · ${card.rarity}` : ''}${catalogVariantLabel(card)}`,
             source: card,
           }))}
           onSelect={(suggestion) => selectCard(suggestion.source as CatalogCard)}
@@ -790,7 +832,7 @@ export function CardForm({
           suggestions={searchCatalogCards(catalogCards, input.cardNumber, 'number').map((card) => ({
             id: card.id,
             value: card.number,
-            description: `${card.name}${card.rarity ? ` · ${card.rarity}` : ''}`,
+            description: `${card.name}${card.rarity ? ` · ${card.rarity}` : ''}${catalogVariantLabel(card)}`,
             source: card,
           }))}
           onSelect={(suggestion) => selectCard(suggestion.source as CatalogCard)}
@@ -822,11 +864,20 @@ export function CardForm({
             'German',
             'Italian',
             'Portuguese',
+            'Portuguese (Brazil)',
+            'Portuguese (Portugal)',
+            'Dutch',
+            'Polish',
+            'Russian',
             'Korean',
             'Chinese',
+            'Chinese (Traditional)',
+            'Chinese (Simplified)',
+            'Indonesian',
+            'Thai',
             'Other',
           ]}
-          onChange={update}
+          onChange={changeLanguage}
           errors={errors}
         />
         <SelectField
@@ -1152,7 +1203,13 @@ function catalogPrinting(card: CatalogCard, currentPrinting: string): string {
   return '';
 }
 
-/** Attach the selected printing's latest TCGplayer snapshot to the owned card. */
+/** Distinguish catalog records that share a set, name, and card number. */
+function catalogVariantLabel(card: CatalogCard): string {
+  const printings = card.availablePrintings ?? [];
+  return printings.length === 1 ? ` · ${printings[0]}` : '';
+}
+
+/** Attach the selected printing's latest marketplace snapshot to the owned card. */
 function withCatalogSnapshot(input: CardInput, card: CatalogCard): CardInput {
   const price = (card.prices ?? []).find((candidate) => candidate.printing === input.printing);
   return {
@@ -1189,7 +1246,10 @@ function messageFor(error: unknown, fallback: string) {
 function formatDate(value: string | null) {
   if (!value) return null;
   const normalized = value.replaceAll('/', '-');
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(new Date(`${normalized}T12:00:00`));
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? new Date(`${normalized}T12:00:00`) : new Date(normalized);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date)
+    : null;
 }
 
 function formatMoney(value: number | null): string | null {
@@ -1224,7 +1284,10 @@ function formatPriceRange(card: OwnedCard): string | null {
   return prices.some(Boolean) ? prices.map((price) => price || '—').join(' / ') : null;
 }
 function formatDateTime(value: string) {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+  const date = new Date(value);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(date)
+    : null;
 }
 function historyLabel(card: OwnedCard) {
   const action =

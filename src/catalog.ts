@@ -20,10 +20,12 @@ export function findSetByName(sets: CatalogSet[], name: string): CatalogSet | nu
 function normalizeSetName(value: string): string {
   return value
     .trim()
+    .normalize('NFKD')
     .toLocaleLowerCase()
+    .replace(/\p{M}/gu, '')
     .replace(/[™®]/g, '')
     .replace(/\s+set$/, '')
-    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
     .trim();
 }
 
@@ -37,8 +39,8 @@ export function findCardMatch(cards: CatalogCard[], cardName: string, cardNumber
   if (normalizedNumber) {
     const numberMatches = cards.filter((card) => card.number.toLocaleLowerCase() === normalizedNumber);
     if (numberMatches.length === 1) return numberMatches[0];
-    const namedNumberMatch = numberMatches.find((card) => card.name.toLocaleLowerCase() === normalizedName);
-    if (namedNumberMatch) return namedNumberMatch;
+    const namedNumberMatches = numberMatches.filter((card) => card.name.toLocaleLowerCase() === normalizedName);
+    if (namedNumberMatches.length === 1) return namedNumberMatches[0];
   }
   if (normalizedName) {
     const nameMatches = cards.filter((card) => card.name.toLocaleLowerCase() === normalizedName);

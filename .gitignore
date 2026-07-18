@@ -8,5 +8,4 @@ dist/
 coverage/
 *.log
 .DS_Store
-worker-configuration.d.ts
 tmp/pokedex-seed.sql

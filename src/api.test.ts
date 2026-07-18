@@ -14,9 +14,11 @@ describe('catalog API compatibility', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    const response = await api.catalogCards('base1', 1);
+    const response = await api.catalogCards('base1', 1, 'Bulbasaur');
 
-    expect(requestedUrl).toContain('catalogVersion=6');
+    expect(requestedUrl).toContain('catalogVersion=8');
+    expect(requestedUrl).toContain('language=English');
+    expect(requestedUrl).toContain('pokemonName=Bulbasaur');
     expect(response.cards[0]).toMatchObject({
       availablePrintings: [],
       suggestedPrinting: null,

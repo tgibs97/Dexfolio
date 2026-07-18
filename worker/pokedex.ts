@@ -1,4 +1,5 @@
 import type { PokedexSyncResponse, PokedexSyncStatus, SyncedPokemon } from '../shared/types';
+import { type ExternalApiRequestLogger, withExternalApiLogging } from './externalApiLogs';
 
 const API_ROOT = 'https://pokeapi.co/api/v2';
 const API_TIMEOUT_MS = 12_000;
@@ -23,9 +24,16 @@ export class PokedexUnavailableError extends Error {}
 
 /** Compare D1 with PokéAPI without mutating the collection. */
 export async function getPokedexSyncStatus(db: D1Database): Promise<PokedexSyncStatus> {
+  return withExternalApiLogging(db, (logger) => getPokedexSyncStatusLogged(db, logger));
+}
+
+async function getPokedexSyncStatusLogged(
+  db: D1Database,
+  logger: ExternalApiRequestLogger,
+): Promise<PokedexSyncStatus> {
   const [stored, upstream] = await Promise.all([
     storedPokemonCount(db),
-    fetchPokeApi<ListResponse>('/pokemon-species?limit=1&offset=0'),
+    fetchPokeApi<ListResponse>(logger, '/pokemon-species?limit=1&offset=0'),
   ]);
   const upstreamTotal = validCount(upstream.count);
   return {
@@ -38,9 +46,13 @@ export async function getPokedexSyncStatus(db: D1Database): Promise<PokedexSyncS
 
 /** Insert only previously unknown species and create their empty binder slots. */
 export async function syncPokedex(db: D1Database): Promise<PokedexSyncResponse> {
+  return withExternalApiLogging(db, (logger) => syncPokedexLogged(db, logger));
+}
+
+async function syncPokedexLogged(db: D1Database, logger: ExternalApiRequestLogger): Promise<PokedexSyncResponse> {
   const [storedBefore, speciesList] = await Promise.all([
     storedPokemonCount(db),
-    fetchPokeApi<ListResponse>('/pokemon-species?limit=100000&offset=0'),
+    fetchPokeApi<ListResponse>(logger, '/pokemon-species?limit=100000&offset=0'),
   ]);
   const upstreamTotal = validCount(speciesList.count);
   if (speciesList.results.length !== upstreamTotal) {
@@ -54,12 +66,12 @@ export async function syncPokedex(db: D1Database): Promise<PokedexSyncResponse> 
   );
   if (!newResources.length) return syncResponse(storedBefore, upstreamTotal, [], storedBefore);
 
-  const generations = await fetchPokeApi<ListResponse>('/generation?limit=100&offset=0');
+  const generations = await fetchPokeApi<ListResponse>(logger, '/generation?limit=100&offset=0');
   if (!Number.isInteger(generations.count) || generations.results.length !== generations.count) {
     throw new PokedexUnavailableError('PokéAPI returned an incomplete generation list.');
   }
   const generationDetails = await Promise.all(
-    generations.results.map((resource) => fetchPokeApi<GenerationResponse>(resource.url)),
+    generations.results.map((resource) => fetchPokeApi<GenerationResponse>(logger, resource.url)),
   );
   const generationBySpecies = new Map<number, number>();
   for (const generation of generationDetails) {
@@ -172,9 +184,10 @@ function displayName(identifier: string): string {
   );
 }
 
-async function fetchPokeApi<T>(resource: string): Promise<T> {
+async function fetchPokeApi<T>(logger: ExternalApiRequestLogger, resource: string): Promise<T> {
   const url = validatedPokeApiUrl(resource);
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const startedAt = Date.now();
     let response: Response;
     try {
       response = await fetch(url, {
@@ -182,10 +195,30 @@ async function fetchPokeApi<T>(resource: string): Promise<T> {
         signal: AbortSignal.timeout(API_TIMEOUT_MS),
       });
     } catch (error) {
+      logger.record({
+        provider: 'PokéAPI',
+        method: 'GET',
+        url: url.toString(),
+        statusCode: null,
+        success: false,
+        durationMs: Date.now() - startedAt,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        requestedAt: new Date(startedAt).toISOString(),
+      });
       if (attempt === 0) continue;
       const timedOut = error instanceof DOMException && error.name === 'TimeoutError';
       throw new PokedexUnavailableError(timedOut ? 'PokéAPI request timed out.' : 'PokéAPI request failed.');
     }
+    logger.record({
+      provider: 'PokéAPI',
+      method: 'GET',
+      url: url.toString(),
+      statusCode: response.status,
+      success: response.ok,
+      durationMs: Date.now() - startedAt,
+      errorMessage: response.ok ? null : `HTTP ${response.status}`,
+      requestedAt: new Date(startedAt).toISOString(),
+    });
     if (response.ok) return (await response.json()) as T;
     if (!RETRYABLE_STATUSES.has(response.status) || attempt === 1) {
       throw new PokedexUnavailableError(`PokéAPI returned ${response.status}.`);

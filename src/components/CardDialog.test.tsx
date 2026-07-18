@@ -60,7 +60,9 @@ describe('Add Card catalog assistance', () => {
     fireEvent.change(screen.getByLabelText(/Set name/), { target: { value: 'bas' } });
     fireEvent.click(await screen.findByRole('option', { name: /Base.*BS/ }));
     expect(screen.getByLabelText(/Set code/)).toHaveValue('BS');
-    await waitFor(() => expect(cardsSpy).toHaveBeenCalledWith('base1', 1, expect.any(AbortSignal)));
+    await waitFor(() =>
+      expect(cardsSpy).toHaveBeenCalledWith('base1', 1, 'Bulbasaur', 'English', expect.any(AbortSignal)),
+    );
 
     fireEvent.change(screen.getByLabelText(/Card name/), { target: { value: 'bulb' } });
     fireEvent.click(await screen.findByRole('option', { name: /Bulbasaur.*44.*Common/ }));
@@ -107,6 +109,170 @@ describe('Add Card catalog assistance', () => {
     expect(screen.getByRole('button', { name: 'Add to binder' })).toBeInTheDocument();
     expect(screen.getByLabelText(/Card number/)).toHaveValue('44');
     expect(screen.getByLabelText(/Printing/)).toHaveValue('Normal');
+  });
+
+  it('loads localized cards and saves their linked market snapshot', async () => {
+    const japaneseDetail: PokemonDetail = {
+      ...detail,
+      id: 65,
+      nationalDexNumber: 65,
+      name: 'Alakazam',
+      referenceImageUrl: '/alakazam.png',
+    };
+    const saveSpy = vi.spyOn(api, 'saveCard').mockResolvedValue(detail);
+    const setsSpy = vi.spyOn(api, 'catalogSets').mockResolvedValue({
+      sets: [{ id: 'sv4a-shiny-treasure-ex', name: 'Shiny Treasure ex', code: 'SV4a', releaseDate: null }],
+    });
+    const cardsSpy = vi.spyOn(api, 'catalogCards').mockResolvedValue({
+      cards: [
+        {
+          id: 'poketrace:019bffb5-343d-71aa-b29c-09106357b176:tcg:567726',
+          name: 'Alakazam ex',
+          number: '326',
+          rarity: 'Shiny Secret Rare',
+          availablePrintings: ['Holofoil'],
+          suggestedPrinting: 'Holofoil',
+          prices: [{ printing: 'Holofoil', lowCents: 193, midCents: null, highCents: 193, marketCents: 193 }],
+          pricesUpdatedAt: '2026-07-14T00:00:00.000Z',
+          tcgplayerUrl: 'https://www.tcgplayer.com/product/567726',
+        },
+      ],
+    });
+
+    render(<CardForm detail={japaneseDetail} mode="add" onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/Language/), { target: { value: 'Japanese' } });
+
+    fireEvent.change(screen.getByLabelText(/Set name/), { target: { value: 'SV4a' } });
+    await waitFor(() => expect(setsSpy).toHaveBeenCalledWith('Japanese', 'SV4a', expect.any(AbortSignal)));
+    fireEvent.click(await screen.findByRole('option', { name: /Shiny Treasure ex.*SV4a/ }));
+    await waitFor(() =>
+      expect(cardsSpy).toHaveBeenCalledWith(
+        'sv4a-shiny-treasure-ex',
+        65,
+        'Alakazam',
+        'Japanese',
+        expect.any(AbortSignal),
+      ),
+    );
+    await screen.findByText('1 matching card found.');
+    const setRequestsAfterSelection = setsSpy.mock.calls.length;
+    await new Promise((resolve) => window.setTimeout(resolve, 400));
+    expect(setsSpy).toHaveBeenCalledTimes(setRequestsAfterSelection);
+    expect(screen.getByText('1 matching card found.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Card number/), { target: { value: '326' } });
+    fireEvent.click(await screen.findByRole('option', { name: /326.*Alakazam ex/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add to binder' }));
+
+    await waitFor(() =>
+      expect(saveSpy).toHaveBeenCalledWith(
+        65,
+        expect.objectContaining({
+          language: 'Japanese',
+          setCode: 'SV4a',
+          catalogCardId: 'poketrace:019bffb5-343d-71aa-b29c-09106357b176:tcg:567726',
+          marketPriceCents: '193',
+        }),
+        null,
+        'add',
+      ),
+    );
+  });
+
+  it('preserves the selected printing when localized catalog records share a name and number', async () => {
+    const pikachuDetail: PokemonDetail = {
+      ...detail,
+      id: 25,
+      nationalDexNumber: 25,
+      name: 'Pikachu',
+      referenceImageUrl: '/pikachu.png',
+    };
+    const saveSpy = vi.spyOn(api, 'saveCard').mockResolvedValue(detail);
+    vi.spyOn(api, 'catalogSets').mockResolvedValue({
+      sets: [{ id: 'sv4a-shiny-treasure-ex', name: 'Shiny Treasure ex', code: 'SV4a', releaseDate: null }],
+    });
+    vi.spyOn(api, 'catalogCards').mockResolvedValue({
+      cards: [
+        {
+          id: 'poketrace:019bffb5-343c-76dd-8c12-bf3e04f2e3b5',
+          name: 'Pikachu',
+          number: '055',
+          rarity: 'Common',
+          availablePrintings: ['Normal'],
+          suggestedPrinting: 'Normal',
+          prices: [{ printing: 'Normal', lowCents: 100, midCents: null, highCents: 200, marketCents: 150 }],
+          pricesUpdatedAt: '2026-07-17T12:00:00Z',
+          tcgplayerUrl: 'https://www.ebay.com/itm/normal',
+        },
+        {
+          id: 'poketrace:019bffc4-1bf1-75bf-8a70-1f9962cfa4aa',
+          name: 'Pikachu',
+          number: '055',
+          rarity: 'Common',
+          availablePrintings: ['Holofoil'],
+          suggestedPrinting: 'Holofoil',
+          prices: [{ printing: 'Holofoil', lowCents: 200, midCents: null, highCents: 300, marketCents: 250 }],
+          pricesUpdatedAt: '2026-07-17T12:00:00Z',
+          tcgplayerUrl: 'https://www.ebay.com/itm/holofoil',
+        },
+      ],
+    });
+
+    render(<CardForm detail={pikachuDetail} mode="add" onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/Language/), { target: { value: 'Japanese' } });
+    fireEvent.change(screen.getByLabelText(/Set name/), { target: { value: 'SV4a' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Shiny Treasure ex.*SV4a/ }));
+    await screen.findByText('2 matching cards found.');
+
+    fireEvent.change(screen.getByLabelText(/Card number/), { target: { value: '055' } });
+    fireEvent.click(await screen.findByRole('option', { name: /Pikachu.*Holofoil/ }));
+    expect(screen.getByLabelText(/Printing/)).toHaveValue('Holofoil');
+    fireEvent.click(screen.getByRole('button', { name: 'Add to binder' }));
+
+    await waitFor(() =>
+      expect(saveSpy).toHaveBeenCalledWith(
+        25,
+        expect.objectContaining({
+          catalogCardId: 'poketrace:019bffc4-1bf1-75bf-8a70-1f9962cfa4aa',
+          printing: 'Holofoil',
+          marketPriceCents: '250',
+          tcgplayerUrl: 'https://www.ebay.com/itm/holofoil',
+        }),
+        null,
+        'add',
+      ),
+    );
+  });
+
+  it('recovers a stale localized set name from its correct Japanese set code', async () => {
+    const setsSpy = vi.spyOn(api, 'catalogSets').mockResolvedValue({
+      sets: [{ id: 'sv4a-shiny-treasure-ex', name: 'Shiny Treasure ex', code: 'SV4a', releaseDate: null }],
+    });
+    const cardsSpy = vi.spyOn(api, 'catalogCards').mockResolvedValue({ cards: [] });
+    const alakazamDetail: PokemonDetail = {
+      ...detail,
+      id: 65,
+      nationalDexNumber: 65,
+      name: 'Alakazam',
+      referenceImageUrl: '/alakazam.png',
+    };
+
+    render(<CardForm detail={alakazamDetail} mode="add" onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText(/Language/), { target: { value: 'Japanese' } });
+    fireEvent.change(screen.getByLabelText(/Set name/), { target: { value: 'レイジングサーフ' } });
+    fireEvent.change(screen.getByLabelText(/Set code/), { target: { value: 'SV4a' } });
+
+    await waitFor(() => expect(setsSpy).toHaveBeenCalledWith('Japanese', 'SV4a', expect.any(AbortSignal)));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: /Set name/ })).toHaveValue('Shiny Treasure ex'));
+    await waitFor(() =>
+      expect(cardsSpy).toHaveBeenCalledWith(
+        'sv4a-shiny-treasure-ex',
+        65,
+        'Alakazam',
+        'Japanese',
+        expect.any(AbortSignal),
+      ),
+    );
   });
 
   it('preserves loaded cards when a recognized set code suggestion is selected', async () => {
@@ -179,7 +345,8 @@ describe('Collected card details', () => {
         lowPriceCents: 250,
         midPriceCents: 350,
         highPriceCents: 450,
-        priceUpdatedAt: '2026/07/16',
+        // Foreign catalog providers return a full ISO timestamp here.
+        priceUpdatedAt: '2026-07-16T00:00:00.000Z',
         tcgplayerUrl: 'https://prices.pokemontcg.io/tcgplayer/base1-44',
         notes: null,
         imageUrl: null,
@@ -228,7 +395,7 @@ describe('Collected card details', () => {
     expect(link).toHaveAttribute('target', '_blank');
     expect(await screen.findByText('+$1.25 (+62.50%)')).toHaveClass('trend-positive');
     expect(screen.getByText('+$0.25 (+8.33%)')).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: 'TCGplayer market price history chart' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Market price history chart' })).toBeInTheDocument();
   });
 
   it('shows card details without collection actions to guests', async () => {

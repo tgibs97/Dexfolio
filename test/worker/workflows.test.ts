@@ -11,6 +11,8 @@ afterEach(() => vi.unstubAllGlobals());
 
 beforeEach(async () => {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM external_api_logs'),
+    env.DB.prepare("UPDATE app_settings SET value = '1' WHERE key = 'external_api_logging_enabled'"),
     env.DB.prepare('DELETE FROM catalog_price_history'),
     env.DB.prepare('DELETE FROM owned_cards'),
     env.DB.prepare('DELETE FROM collection_slots'),
@@ -102,9 +104,38 @@ describe('collection card workflows', () => {
     expect((await request('/api/admin/prices/refresh', { method: 'POST' }, headers)).status).toBe(403);
     expect((await request('/api/admin/data/export', {}, headers)).status).toBe(403);
     expect((await request('/api/admin/data/import', { method: 'POST' }, headers)).status).toBe(403);
+    expect((await request('/api/admin/external-api-logs', {}, headers)).status).toBe(403);
+    expect(
+      (
+        await request(
+          '/api/admin/external-api-logging',
+          { method: 'PUT', body: JSON.stringify({ enabled: false }) },
+          headers,
+        )
+      ).status,
+    ).toBe(403);
     expect(await env.DB.prepare('SELECT COUNT(*) AS count FROM owned_cards').first<{ count: number }>()).toEqual({
       count: 0,
     });
+  });
+
+  it('blocks guest catalog requests before they can consume provider quota', async () => {
+    const headers = await guestHeaders();
+    const fetchMock = vi.fn(async () => Response.json({ data: [] }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const sets = await request('/api/catalog/sets?language=Japanese&q=SV4a', {}, headers);
+    expect(sets.status).toBe(403);
+    expect(await sets.json()).toEqual({ error: 'Guest access is view only.' });
+
+    const cards = await request(
+      '/api/catalog/cards?setId=sv4a-shiny-treasure-ex&pokemonNumber=65&pokemonName=Alakazam&language=Japanese',
+      {},
+      headers,
+    );
+    expect(cards.status).toBe(403);
+    expect(await cards.json()).toEqual({ error: 'Guest access is view only.' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('adds, edits, replaces, restores, and removes a card while retaining history', async () => {
@@ -271,6 +302,42 @@ describe('collection card workflows', () => {
     ).toEqual({ count: 4 });
   });
 
+  it('preserves saved prices when a catalog variant has no price values', async () => {
+    const headers = await authenticatedHeaders();
+    await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Bulbasaur') }, headers);
+    await env.DB.prepare("UPDATE owned_cards SET catalog_card_id = 'tcgdex:fr:base1-44'").run();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          id: 'base1-44',
+          localId: '44',
+          name: 'Bulbizarre',
+          variants: { normal: true },
+          pricing: {
+            tcgplayer: {
+              updated: '2026-07-17T12:00:00.000Z',
+              unit: 'USD',
+              normal: { productId: 12345 },
+            },
+          },
+        }),
+      ),
+    );
+
+    const response = await request('/api/admin/prices/refresh', { method: 'POST' }, headers);
+
+    expect(await response.json()).toMatchObject({ refreshed: 0, missingPricing: 1, deferred: 0 });
+    const detail = (await (await request('/api/pokemon/1', {}, headers)).json()) as any;
+    expect(detail.currentCard).toMatchObject({
+      marketPriceCents: 325,
+      lowPriceCents: 250,
+      midPriceCents: 350,
+      highPriceCents: 499,
+      priceUpdatedAt: '2026/07/15',
+    });
+  });
+
   it('refreshes saved pricing snapshots from the daily schedule', async () => {
     const headers = await authenticatedHeaders();
     await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Bulbasaur') }, headers);
@@ -342,7 +409,9 @@ describe('collection card workflows', () => {
 
   it('exports and restores collection records and price history', async () => {
     const headers = await authenticatedHeaders();
-    await request('/api/pokemon/1/cards', { method: 'POST', body: cardForm('Bulbasaur backup') }, headers);
+    const form = cardForm('Bulbasaur backup');
+    form.set('tcgplayerUrl', 'https://www.ebay.com/itm/123456789');
+    await request('/api/pokemon/1/cards', { method: 'POST', body: form }, headers);
 
     const exportResponse = await request('/api/admin/data/export', {}, headers);
     expect(exportResponse.status).toBe(200);
@@ -356,6 +425,7 @@ describe('collection card workflows', () => {
         {
           pokemonNationalDexNumber: 1,
           cardName: 'Bulbasaur backup',
+          tcgplayerUrl: 'https://www.ebay.com/itm/123456789',
           isCurrent: true,
           hadImage: false,
         },
@@ -382,7 +452,11 @@ describe('collection card workflows', () => {
       skippedImages: 0,
     });
     const detail = (await (await request('/api/pokemon/1', {}, headers)).json()) as any;
-    expect(detail.currentCard).toMatchObject({ cardName: 'Bulbasaur backup', imageUrl: null });
+    expect(detail.currentCard).toMatchObject({
+      cardName: 'Bulbasaur backup',
+      tcgplayerUrl: 'https://www.ebay.com/itm/123456789',
+      imageUrl: null,
+    });
     expect(
       await env.DB.prepare('SELECT COUNT(*) AS count FROM catalog_price_history').first<{ count: number }>(),
     ).toEqual({ count: 1 });

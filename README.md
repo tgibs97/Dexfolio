@@ -29,6 +29,7 @@ Cloudflare Worker (Hono + Zod)
 - Mobile camera capture, local preview, large-photo optimization, 8 MB server limit, MIME and file-signature validation
 - Cached Pokémon TCG set/card autocomplete with set-code and rarity autofill
 - Explicit Admin-page Pokédex update checks and safe synchronization of newly released species
+- Admin-visible D1 activity logs for outbound API attempts, with a persistent logging on/off switch
 - Accessible native dialogs, labels, keyboard controls, loading/empty/error states, notifications, and destructive confirmations
 - Local D1/R2 emulation, migration and seed commands, Cloudflare deployment config, and GitHub Actions CI/deployment
 
@@ -84,15 +85,10 @@ After the initial seed, use **Admin → Update Pokédex** to check for newly rel
    ```bash
    npx wrangler secret put ADMIN_PASSWORD
    npx wrangler secret put SESSION_SECRET
+   npx wrangler secret put POKETRACE_API_KEY
    ```
 
-   Optionally create a free API key at the [Pokémon TCG Developer Portal](https://dev.pokemontcg.io/) for higher autocomplete rate limits. Suggestions work at reduced limits without one:
-
-   ```bash
-   npx wrangler secret put POKEMON_TCG_API_KEY
-   ```
-
-   Never put either value in `wrangler.jsonc`, `.dev.vars.example`, GitHub Actions YAML, or Git.
+   Create the catalog key in the [PokeTrace dashboard](https://poketrace.com/dashboard). Never put any real secret in `wrangler.jsonc`, `.dev.vars.example`, GitHub Actions YAML, or Git.
 
 4. Initialize the database and perform the first deployment:
 
@@ -120,6 +116,8 @@ Pull requests are fully built and tested. Public preview URLs are intentionally 
 ## Data and lifecycle
 
 `pokemon` contains general reference records. `collection_slots` owns the stable binder position and current-card pointer. `owned_cards` contains user-entered records; a partial unique index permits only one current card per Pokémon.
+
+`external_api_logs` records real outbound provider attempts, including retries, response status, duration, and failures. Cache hits are excluded, API keys and headers are never stored, and logging can be disabled from Admin without deleting existing history.
 
 Replacing or restoring first archives the outgoing card, then switches the slot pointer in one D1 batch. Removing a card archives it with a `removed` reason and returns the slot to Missing. Images for archived cards remain in R2 so history stays viewable and restorable. Editing an image only replaces the image belonging to that same card record and removes the superseded R2 object after the database update succeeds.
 

@@ -51,6 +51,19 @@ describe('catalog matching', () => {
     expect(findCardMatch(cards, '', '44')).toBeNull();
   });
 
+  it('does not guess between catalog variants with the same name and number', () => {
+    expect(
+      findCardMatch(
+        [
+          { ...cards[0], id: 'normal', availablePrintings: ['Normal'] },
+          { ...cards[0], id: 'holo', availablePrintings: ['Holofoil'] },
+        ],
+        'Bulbasaur',
+        '44',
+      ),
+    ).toBeNull();
+  });
+
   it('provides forgiving visible set and card suggestions', () => {
     expect(
       searchCatalogSets([...sets, { id: 'blk', name: 'Black Bolt', code: 'BLK', releaseDate: null }], 'pitch bla'),
@@ -58,5 +71,16 @@ describe('catalog matching', () => {
     expect(searchCatalogSets([...sets, promoSet], 'SVP')).toEqual([promoSet]);
     expect(searchCatalogCards(cards, 'alt', 'name')).toEqual([cards[1]]);
     expect(searchCatalogCards(cards, '44', 'number')).toHaveLength(2);
+  });
+
+  it('searches localized names, accents, and regional set codes', () => {
+    const localized: CatalogSet[] = [
+      { id: 'SV2a', name: 'ポケモンカード151', code: 'SV2a', releaseDate: null },
+      { id: 'sv08.5', name: 'Évolutions Prismatiques', code: 'sv08.5', releaseDate: null },
+    ];
+
+    expect(searchCatalogSets(localized, 'ポケモン')).toEqual([localized[0]]);
+    expect(searchCatalogSets(localized, 'evolutions')).toEqual([localized[1]]);
+    expect(findSetByName(localized, 'SV2a')).toEqual(localized[0]);
   });
 });

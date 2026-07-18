@@ -1,12 +1,13 @@
 import { type Context, Hono } from 'hono';
 import { secureHeaders } from 'hono/secure-headers';
-import type { PriceHistoryRange, PriceRefreshResponse, SortOption } from '../shared/types';
+import type { CatalogPrice, PriceHistoryRange, PriceRefreshResponse, SortOption } from '../shared/types';
 import { clearSession, createSession, credentialsAreValid, getSessionRole, hasAllowedOrigin } from './auth';
-import { getCatalogCards, getCatalogCardsByIds, getCatalogSets } from './catalog';
+import { getCatalogCardRefreshByIds, getCatalogCards, getCatalogSets } from './catalog';
 import { exportCollectionArchive, importCollectionArchive } from './dataArchive';
 import { CollectionBackupError } from './dataTransfer';
 import { getCardPriceHistory, getCardRow, getPokemonDetail, listPokemon } from './db';
 import type { Env } from './env';
+import { getExternalApiActivity, setExternalApiLogging } from './externalApiLogs';
 import { ImageValidationError, storeImage, validateImage } from './images';
 import { getPokedexSyncStatus, PokedexUnavailableError, syncPokedex } from './pokedex';
 import { cardSchema, formDataToCardInput, loginSchema, priceToCents, snapshotCents } from './validation';
@@ -81,7 +82,9 @@ app.use('/api/*', async (c, next) => {
   if (!role) return c.json({ error: 'Authentication required.' }, 401);
   if (
     role === 'guest' &&
-    (c.req.path.startsWith('/api/admin/') || !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method))
+    (c.req.path.startsWith('/api/admin/') ||
+      c.req.path.startsWith('/api/catalog/') ||
+      !['GET', 'HEAD', 'OPTIONS'].includes(c.req.method))
   ) {
     return c.json({ error: 'Guest access is view only.' }, 403);
   }
@@ -115,8 +118,12 @@ app.get('/api/pokemon', async (c) => {
 });
 
 app.get('/api/catalog/sets', async (c) => {
+  const language = c.req.query('language')?.trim() || 'English';
+  const search = c.req.query('q')?.trim().slice(0, 120) || '';
   try {
-    return c.json({ sets: await getCatalogSets(c.env) }, 200, { 'Cache-Control': 'private, max-age=3600' });
+    return c.json({ sets: await getCatalogSets(c.env, language, search) }, 200, {
+      'Cache-Control': 'private, max-age=3600',
+    });
   } catch (error) {
     console.error('Set catalog lookup failed', error);
     return c.json({ error: 'Card set suggestions are temporarily unavailable.' }, 502);
@@ -125,12 +132,14 @@ app.get('/api/catalog/sets', async (c) => {
 
 app.get('/api/catalog/cards', async (c) => {
   const setId = c.req.query('setId')?.trim() || '';
+  const language = c.req.query('language')?.trim() || 'English';
+  const pokemonName = c.req.query('pokemonName')?.trim().slice(0, 120) || '';
   const pokemonNumber = positiveInteger(c.req.query('pokemonNumber') || '');
-  if (!/^[a-zA-Z0-9-]{1,40}$/.test(setId) || !pokemonNumber) {
+  if (!/^[a-zA-Z0-9._-]{1,100}$/.test(setId) || !pokemonNumber) {
     return c.json({ error: 'A valid set and Pokédex number are required.' }, 400);
   }
   try {
-    return c.json({ cards: await getCatalogCards(c.env, setId, pokemonNumber) }, 200, {
+    return c.json({ cards: await getCatalogCards(c.env, setId, pokemonNumber, language, pokemonName) }, 200, {
       'Cache-Control': 'private, max-age=3600',
     });
   } catch (error) {
@@ -198,6 +207,25 @@ app.post('/api/admin/prices/refresh', async (c) => {
     console.error('Bulk pricing refresh failed', error);
     return c.json({ error: 'Pricing could not be refreshed from the card catalog.' }, 502);
   }
+});
+
+app.get('/api/admin/external-api-logs', async (c) => {
+  const value = c.req.query('beforeId');
+  const beforeId = value ? positiveInteger(value) : null;
+  if (value && !beforeId) return c.json({ error: 'Use a valid activity cursor.' }, 400);
+  return c.json(await getExternalApiActivity(c.env.DB, beforeId), 200, { 'Cache-Control': 'no-store' });
+});
+
+app.put('/api/admin/external-api-logging', async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON request.' }, 400);
+  }
+  const enabled = body && typeof body === 'object' ? (body as { enabled?: unknown }).enabled : undefined;
+  if (typeof enabled !== 'boolean') return c.json({ error: 'The enabled setting must be true or false.' }, 400);
+  return c.json(await setExternalApiLogging(c.env.DB, enabled));
 });
 
 app.get('/api/pokemon/:id', async (c) => {
@@ -480,24 +508,31 @@ async function refreshOwnedCardPrices(env: Env): Promise<PriceRefreshResponse> {
       refreshed: 0,
       missingCatalogId: rows.results.length,
       missingPricing: 0,
+      deferred: 0,
       refreshedAt: new Date().toISOString(),
     };
   }
 
-  const catalogCards = await getCatalogCardsByIds(
+  const catalogRefresh = await getCatalogCardRefreshByIds(
     env,
     linked.map((row) => row.catalog_card_id),
   );
-  const catalogById = new Map(catalogCards.map((card) => [card.id, card]));
+  const catalogById = new Map(catalogRefresh.cards.map((card) => [card.id, card]));
+  const deferredCatalogIds = new Set(catalogRefresh.deferredCardIds);
   const statements: D1PreparedStatement[] = [];
   let refreshed = 0;
   let missingPricing = 0;
+  let deferred = 0;
   for (const owned of linked) {
+    if (deferredCatalogIds.has(owned.catalog_card_id)) {
+      deferred += 1;
+      continue;
+    }
     const catalog = catalogById.get(owned.catalog_card_id);
     const price =
       catalog?.prices.find((candidate) => candidate.printing === owned.printing) ||
-      (catalog?.prices.length === 1 ? catalog.prices[0] : undefined);
-    if (!catalog || !price) {
+      (catalog?.prices.length === 1 && catalog.availablePrintings.length === 1 ? catalog.prices[0] : undefined);
+    if (!catalog || !price || !hasCatalogPriceValue(price)) {
       missingPricing += 1;
       continue;
     }
@@ -534,8 +569,13 @@ async function refreshOwnedCardPrices(env: Env): Promise<PriceRefreshResponse> {
     refreshed,
     missingCatalogId: rows.results.length - linked.length,
     missingPricing,
+    deferred,
     refreshedAt: new Date().toISOString(),
   };
+}
+
+function hasCatalogPriceValue(price: CatalogPrice): boolean {
+  return [price.marketCents, price.lowCents, price.midCents, price.highCents].some((value) => value !== null);
 }
 
 /** Builds a deduplicated snapshot write when catalog pricing is available. */

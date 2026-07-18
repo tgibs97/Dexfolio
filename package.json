@@ -16,7 +16,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
     "db:seed:local": "tsx scripts/seed-pokedex.ts --local",
     "db:seed:remote": "tsx scripts/seed-pokedex.ts --remote",
-    "types:worker": "wrangler types worker-configuration.d.ts",
+    "types:worker": "wrangler types worker-configuration.d.ts --include-runtime false --env-file .dev.vars.example",
     "typecheck": "tsc --noEmit && tsc -p worker/tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings=0",
     "format": "prettier --write \"*.{js,json,md,ts,html}\" \".github/**/*.yml\" \"scripts/**/*.ts\" \"shared/**/*.ts\" \"src/**/*.{ts,tsx,css}\" \"test/**/*.ts\" \"worker/**/*.ts\"",

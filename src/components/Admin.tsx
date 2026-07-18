@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   CollectionImportResponse,
+  ExternalApiActivityResponse,
   PokedexSyncResponse,
   PokedexSyncStatus,
   PriceRefreshResponse,
@@ -23,7 +24,62 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
   const [transferResult, setTransferResult] = useState<CollectionImportResponse | null>(null);
   const [transferMessage, setTransferMessage] = useState('');
   const [transferError, setTransferError] = useState('');
+  const [apiActivity, setApiActivity] = useState<ExternalApiActivityResponse | null>(null);
+  const [loadingApiActivity, setLoadingApiActivity] = useState(true);
+  const [updatingApiLogging, setUpdatingApiLogging] = useState(false);
+  const [apiActivityError, setApiActivityError] = useState('');
   const backupInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    api
+      .externalApiActivity()
+      .then((activity) => {
+        if (active) setApiActivity(activity);
+      })
+      .catch((reason: unknown) => {
+        if (active)
+          setApiActivityError(reason instanceof ApiRequestError ? reason.message : 'API activity could not be loaded.');
+      })
+      .finally(() => {
+        if (active) setLoadingApiActivity(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function loadApiActivity(beforeId?: number, append = false) {
+    setLoadingApiActivity(true);
+    setApiActivityError('');
+    try {
+      const next = await api.externalApiActivity(beforeId);
+      setApiActivity((current) => (append && current ? { ...next, logs: [...current.logs, ...next.logs] } : next));
+    } catch (reason) {
+      setApiActivityError(reason instanceof ApiRequestError ? reason.message : 'API activity could not be loaded.');
+    } finally {
+      setLoadingApiActivity(false);
+    }
+  }
+
+  async function changeApiLogging(enabled: boolean) {
+    setUpdatingApiLogging(true);
+    setApiActivityError('');
+    try {
+      const result = await api.setExternalApiLogging(enabled);
+      setApiActivity((current) =>
+        current
+          ? { ...current, enabled: result.enabled }
+          : { enabled: result.enabled, total: 0, logs: [], nextBeforeId: null },
+      );
+    } catch (reason) {
+      setApiActivityError(
+        reason instanceof ApiRequestError ? reason.message : 'The logging setting could not be saved.',
+      );
+    } finally {
+      setUpdatingApiLogging(false);
+    }
+  }
 
   async function refreshPrices() {
     setRefreshing(true);
@@ -36,6 +92,7 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
       setPriceError(reason instanceof ApiRequestError ? reason.message : 'Pricing could not be refreshed.');
     } finally {
       setRefreshing(false);
+      void loadApiActivity();
     }
   }
 
@@ -49,6 +106,7 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
       setPokedexError(reason instanceof ApiRequestError ? reason.message : 'The Pokédex update check failed.');
     } finally {
       setCheckingPokedex(false);
+      void loadApiActivity();
     }
   }
 
@@ -64,6 +122,7 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
       setPokedexError(reason instanceof ApiRequestError ? reason.message : 'New Pokémon could not be synchronized.');
     } finally {
       setSyncingPokedex(false);
+      void loadApiActivity();
     }
   }
 
@@ -299,11 +358,11 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
       </section>
       <section className="admin-panel" aria-labelledby="pricing-title">
         <div>
-          <p className="eyebrow">TCGplayer snapshots</p>
+          <p className="eyebrow">Marketplace snapshots</p>
           <h2 id="pricing-title">Refresh card pricing</h2>
           <p>
             Fetch the latest available market, low, mid, and high prices for every current and archived card linked to
-            the Pokémon TCG catalog.
+            the multilingual Pokémon TCG catalog.
           </p>
           <p className="admin-note">This may take a little while for a large collection.</p>
         </div>
@@ -341,10 +400,96 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
                 <dt>Pricing unavailable</dt>
                 <dd>{priceResult.missingPricing}</dd>
               </div>
+              <div>
+                <dt>Deferred cards</dt>
+                <dd>{priceResult.deferred}</dd>
+              </div>
             </dl>
             <small>Finished {formatDateTime(priceResult.refreshedAt)}</small>
+            {priceResult.deferred > 0 && (
+              <p>Deferred cards will rotate into a future daily refresh to stay within Worker limits.</p>
+            )}
             {(priceResult.missingCatalogId > 0 || priceResult.missingPricing > 0) && (
               <p>Edit and save skipped cards after selecting a catalog suggestion to link them for future refreshes.</p>
+            )}
+          </div>
+        )}
+      </section>
+      <section className="admin-panel api-activity-panel" aria-labelledby="api-activity-title">
+        <div>
+          <p className="eyebrow">External service observability</p>
+          <h2 id="api-activity-title">External API activity</h2>
+          <p>
+            Review real outbound requests to PokéAPI, Pokémon TCG API, PokeTrace, TCGdex, and the exchange-rate API.
+            Cache hits do not create log entries.
+          </p>
+          <p className="admin-note">Request headers and API keys are never stored.</p>
+        </div>
+        <div className="api-activity-actions">
+          <label className="api-logging-toggle">
+            <input
+              type="checkbox"
+              checked={apiActivity?.enabled ?? true}
+              disabled={!apiActivity || updatingApiLogging}
+              onChange={(event) => void changeApiLogging(event.target.checked)}
+            />
+            <span>
+              {updatingApiLogging ? 'Saving…' : apiActivity?.enabled === false ? 'Logging off' : 'Logging on'}
+            </span>
+          </label>
+          <button
+            className="secondary admin-action"
+            disabled={loadingApiActivity}
+            onClick={() => void loadApiActivity()}
+          >
+            {loadingApiActivity ? 'Loading activity…' : 'Refresh activity'}
+          </button>
+        </div>
+        {apiActivityError && (
+          <p className="form-error admin-result" role="alert">
+            {apiActivityError}
+          </p>
+        )}
+        {apiActivity && !apiActivityError && (
+          <div className="api-activity-log">
+            <p className="api-activity-summary">
+              {apiActivity.total} logged request{apiActivity.total === 1 ? '' : 's'} · Logging is{' '}
+              {apiActivity.enabled ? 'enabled' : 'disabled'}
+            </p>
+            {apiActivity.logs.length ? (
+              <div className="api-log-table" role="table" aria-label="External API request log">
+                <div className="api-log-row api-log-heading" role="row">
+                  <span role="columnheader">Time</span>
+                  <span role="columnheader">Provider</span>
+                  <span role="columnheader">Status</span>
+                  <span role="columnheader">Duration</span>
+                  <span role="columnheader">Endpoint</span>
+                </div>
+                {apiActivity.logs.map((log) => (
+                  <div className={`api-log-row${log.success ? '' : ' failed'}`} role="row" key={log.id}>
+                    <span role="cell">{formatDateTime(log.requestedAt)}</span>
+                    <strong role="cell">{log.provider}</strong>
+                    <span role="cell" title={log.errorMessage ?? undefined}>
+                      {log.statusCode ?? 'Network error'}
+                    </span>
+                    <span role="cell">{log.durationMs.toLocaleString()} ms</span>
+                    <code role="cell" title={log.url}>
+                      {formatExternalUrl(log.url)}
+                    </code>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="admin-note">No external requests have been logged yet.</p>
+            )}
+            {apiActivity.nextBeforeId && (
+              <button
+                className="secondary api-log-more"
+                disabled={loadingApiActivity}
+                onClick={() => void loadApiActivity(apiActivity.nextBeforeId ?? undefined, true)}
+              >
+                {loadingApiActivity ? 'Loading…' : 'Load older requests'}
+              </button>
             )}
           </div>
         )}
@@ -355,6 +500,15 @@ export function Admin({ onDataChanged }: { onDataChanged: () => void }) {
 
 function formatDateTime(value: string): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value));
+}
+
+function formatExternalUrl(value: string): string {
+  try {
+    const url = new URL(value);
+    return `${url.hostname}${url.pathname}${url.search}`;
+  } catch {
+    return value;
+  }
 }
 
 function formatAddedPokemon(pokemon: PokedexSyncResponse['addedPokemon']): string {
